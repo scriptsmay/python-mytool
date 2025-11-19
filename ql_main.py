@@ -8,7 +8,7 @@ from utils import push, logger
 
 
 def ql_push(status_code, title, message):
-    if os.getenv("AutoMihoyoBBS_push_project") == "1":
+    if os.getenv("mihuyo_push") == "1":
         push.push(status_code, message)
     else:
         notify.send(title, message)
