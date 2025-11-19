@@ -28,12 +28,16 @@ async def manually_game_sign():
         await perform_game_sign(user=user_, msgs_list=msgs_list)
         logger.info(f"✅用户 {user_id_} 的游戏签到完成")
 
+    result_msg = ""
     if msgs_list:
         # 每个消息单独一行，更清晰
         result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
+        result_msg = "🎉执行完成，无记录消息"
         logger.info("🎉执行完成，无记录消息")
+
+    return result_msg
 
 
 async def manually_bbs_sign():
@@ -48,12 +52,16 @@ async def manually_bbs_sign():
         logger.info(f"✅用户 {user_id_} 的米游币任务完成")
 
     # logger.info("🎉所有用户的米游币任务执行完成")
+    result_msg = ""
     if msgs_list:
         # 每个消息单独一行，更清晰
         result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
+        result_msg = "🎉执行完成，无记录消息"
         logger.info("🎉执行完成，无记录消息")
+
+    return result_msg
 
 
 async def perform_game_sign(user: UserData, msgs_list=None):

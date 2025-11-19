@@ -17,6 +17,14 @@ from models import plugin_config
 from utils import logger
 
 
+def game_sign_task():
+    return manually_game_sign()
+
+
+def bbs_sign_task():
+    return manually_bbs_sign()
+
+
 async def main_task():
     logger.info("⏳开始执行任务...")
     await manually_game_sign()
