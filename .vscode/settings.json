@@ -1,0 +1,9 @@
+{
+  "python.defaultInterpreterPath": "./venv/bin/python",
+  "python.analysis.extraPaths": ["./"],
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true
+  },
+  "files.trimTrailingWhitespace": true
+}

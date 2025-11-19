@@ -1,0 +1,6 @@
+data/config.json
+data/account.json
+logs/
+
+__pycache__/
+*.pyc

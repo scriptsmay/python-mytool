@@ -1,0 +1,67 @@
+{
+  "version": "v1.0.0",
+  "preferences": {
+    "github_proxy": "",
+    "enable_connection_test": true,
+    "connection_test_interval": 30,
+    "timeout": 10,
+    "max_retry_times": 3,
+    "retry_interval": 2,
+    "timezone": "Asia/Shanghai",
+    "encoding": "utf-8",
+    "sleep_time": 2,
+    "global_geetest": false,
+    "geetest_url": null,
+    "geetest_params": null,
+    "geetest_json": {
+      "gt": "{gt}",
+      "challenge": "{challenge}"
+    },
+    "override_device_and_salt": false,
+    "game_token_app_id": "2",
+    "qrcode_query_interval": 1,
+    "qrcode_wait_time": 120
+  },
+  "users": {
+    "USERID_XXXXX": {
+      "enable_notice": true,
+      "geetest_url": null,
+      "geetest_params": null,
+      "accounts": {
+        "376153454": {
+          "phone_number": null,
+          "cookies": {
+            "stuid": "376153454",
+            "ltuid": "1234567890",
+            "account_id": "1234567890",
+            "login_uid": "1234567890",
+            "stoken_v1": null,
+            "stoken_v2": "ABCDEFGHIJKLMN",
+            "cookie_token": "ABCDEFGHIJKLMN",
+            "login_ticket": null,
+            "ltoken": "ABCDEFGHIJKLMN",
+            "mid": "ABCDEFGHIJKLMN",
+            "stoken": null
+          },
+          "address": null,
+          "device_id_ios": "",
+          "device_id_android": "",
+          "device_fp": "",
+          "enable_mission": true,
+          "enable_game_sign": true,
+          "enable_resin": false,
+          "platform": "ios",
+          "game_sign_games": [
+            "GenshinImpact",
+            "HonkaiImpact3",
+            "HoukaiGakuen2",
+            "TearsOfThemis",
+            "StarRail",
+            "ZenlessZoneZero"
+          ],
+          "mission_games": ["BBSMission"]
+        }
+      }
+    }
+  }
+}
