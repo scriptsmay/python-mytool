@@ -356,24 +356,6 @@ class PushHandler:
         ).json()
         logger.info(f"推送结果：{rep.get('errmsg')}")
 
-    def ifttt(self, status_id, push_message):
-        """
-        ifttt
-        """
-        ifttt_event = self.cfg.get("ifttt", "event")
-        ifttt_key = self.cfg.get("ifttt", "key")
-        rep = self.http.post(
-            url=f"https://maker.ifttt.com/trigger/{ifttt_event}/with/key/{ifttt_key}",
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            json={"value1": get_push_title(status_id), "value2": push_message},
-        )
-        if "errors" in rep.text:
-            logger.warning(f"推送执行错误：{rep.json()['errors']}")
-            return 0
-        else:
-            logger.info("推送完毕......")
-        return 1
-
     def webhook(self, status_id, push_message):
         """
         WebHook
@@ -384,106 +366,6 @@ class PushHandler:
             json={"title": get_push_title(status_id), "message": push_message},
         ).json()
         logger.info(f"推送结果：{rep.get('errmsg')}")
-
-    def qmsg(self, status_id, push_message):
-        """
-        qmsg
-        """
-        rep = self.http.post(
-            url=f'https://qmsg.zendee.cn/send/{self.cfg.get("qmsg", "key")}',
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            data={"msg": get_push_title(status_id) + "\n" + push_message},
-        ).json()
-        logger.info(f"推送结果：{rep['reason']}")
-
-    def discord(self, status_id, push_message):
-        import pytz
-
-        def get_color() -> int:
-            embed_color = 16744192
-            if status_id == 0:  # 成功
-                embed_color = 1926125
-            elif status_id == 1:  # 全部失败
-                embed_color = 14368575
-            elif status_id == 2:  # 部分失败
-                embed_color = 16744192
-            elif status_id == 3:  # 触发验证码
-                embed_color = 16744192
-            return embed_color
-
-        rep = self.http.post(
-            url=f'{self.cfg.get("discord", "webhook")}',
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            json={
-                "content": None,
-                "embeds": [
-                    {
-                        "title": get_push_title(status_id),
-                        "description": push_message,
-                        "color": get_color(),
-                        "author": {
-                            "name": "MihoyoBBSTools",
-                            "url": "https://github.com/Womsxd/MihoyoBBSTools",
-                            "icon_url": "https://github.com/DGP-Studio/Snap.Hutao.Docs/blob/main/docs/.vuepress/public"
-                            "/images/202308/hoyolab-miyoushe-Icon.png?raw=true ",
-                        },
-                        "timestamp": datetime.now(timezone.utc)
-                        .astimezone(pytz.timezone("Asia/Shanghai"))
-                        .isoformat(),
-                    }
-                ],
-                "username": "MihoyoBBSTools",
-                "avatar_url": "https://github.com/DGP-Studio/Snap.Hutao.Docs/blob/main/docs/.vuepress/public/images"
-                "/202308/hoyolab-miyoushe-Icon.png?raw=true",
-                "attachments": [],
-            },
-        )
-        if rep.status_code != 204:
-            logger.warning(f"推送执行错误：{rep.text}")
-        else:
-            logger.info(f"推送结果：HTTP {rep.status_code} Success")
-
-    def wintoast(self, status_id, push_message):
-        try:
-            from win11toast import toast
-
-            toast(
-                app_id="MihoyoBBSTools",
-                title=get_push_title(status_id),
-                body=push_message,
-                icon="",
-            )
-        except:
-            logger.error(f"请先pip install win11toast再使用win通知")
-
-    def wxpusher(self, status_id, push_message):
-        """
-        WxPusher
-        """
-        try:
-            from wxpusher import WxPusher
-        except:
-            logger.error("WxPusher 模块未安装，请先执行pip install wxpusher")
-            return 1
-        app_token = self.cfg.get("wxpusher", "app_token", fallback=None)
-        uids = self.cfg.get("wxpusher", "uids", fallback="").split(",")
-        topic_ids = self.cfg.get("wxpusher", "topic_ids", fallback="").split(",")
-        if not app_token or not topic_ids:
-            logger.error("WxPusher 推送失败！请检查 app_token, topic_ids 是否正确配置")
-            return 1
-        response = WxPusher.send_message(
-            content=get_push_title(status_id) + "\r\n" + push_message,
-            uids=[uid for uid in uids if uid],  # 过滤空值
-            topic_ids=[int(tid) for tid in topic_ids if tid.isdigit()],
-            token=app_token,
-        )
-        if "data" in response:
-            status_list = [item.get("status", "未知状态") for item in response["data"]]
-            logger.info(f"WxPusher 推送状态：{status_list}")
-            return 0
-        else:
-            logger.error(f"WxPusher 推送失败：{response}")
-            return 1
 
     def serverchan3(self, status_id, push_message):
         sendkey = self.cfg.get("serverchan3", "sendkey")
@@ -504,7 +386,7 @@ class PushHandler:
     # 其他推送方法，例如 ftqq, pushplus 等, 和 telegram 方法相似
     # 在类内部直接使用 self.cfg 读取配置
 
-    def push(self, status, push_message):
+    def push(self, status, push_message, img_file=None):
         logger.debug("消息内容: {}".format(push_message))
         if not self.load_config():
             return 1
