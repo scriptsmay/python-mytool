@@ -1,443 +1,526 @@
-import os
-import re
 import hmac
 import time
 import base64
-import config
-import urllib
+import urllib.parse
 import hashlib
-from datetime import datetime, timezone
+from typing import Optional, Dict, Any, Union, List
+from dataclasses import dataclass
 from .request import get_new_session, get_new_session_use_proxy
 from .logger import logger
-from configparser import ConfigParser, NoOptionError
+from configparser import ConfigParser
 
-title = {
-    -99: "「米游社脚本」依赖缺失",
-    -2: "「米游社脚本」StatusID 错误",
-    -1: "「米游社脚本」Config版本已更新",
-    0: "「米游社脚本」执行成功!",
-    1: "「米游社脚本」执行失败!",
-    2: "「米游社脚本」部分账号执行失败！",
-    3: "「米游社脚本」社区/游戏道具签到触发验证码！",
+
+@dataclass
+class PushConfig:
+    """推送配置类"""
+
+    # 配置项定义
+    enable: bool = True
+    error_push_only: bool = False
+    push_servers: List[str] = None
+    push_block_keys: List[str] = None
+
+    # 各推送服务的配置
+    telegram: Dict[str, Any] = None
+    dingrobot: Dict[str, Any] = None
+    feishubot: Dict[str, Any] = None
+    bark: Dict[str, Any] = None
+    gotify: Dict[str, Any] = None
+    webhook: Dict[str, Any] = None
+
+    def __post_init__(self):
+        if self.push_servers is None:
+            self.push_servers = []
+        if self.push_block_keys is None:
+            self.push_block_keys = []
+        if self.telegram is None:
+            self.telegram = {}
+        if self.dingrobot is None:
+            self.dingrobot = {}
+        if self.feishubot is None:
+            self.feishubot = {}
+        if self.bark is None:
+            self.bark = {}
+        if self.gotify is None:
+            self.gotify = {}
+        if self.webhook is None:
+            self.webhook = {}
+
+
+# 推送标题映射
+PUSH_TITLES = {
+    -99: "「脚本」依赖缺失",
+    -2: "「脚本」StatusID 错误",
+    -1: "「脚本」Config版本已更新",
+    0: "「脚本」执行成功!",
+    1: "「脚本」执行失败!",
+    2: "「脚本」部分账号执行失败！",
+    3: "「脚本」社区/游戏道具签到触发验证码！",
+}
+
+# 支持的推送方式
+PUSH_METHODS = {
+    "telegram": "telegram",
+    "dingrobot": "dingrobot",
+    "feishubot": "feishubot",
+    "bark": "bark",
+    "gotify": "gotify",
+    "webhook": "webhook",
 }
 
 
-def get_push_title(status_id) -> str:
-    """
-    获取推送标题
-    :param status_id: 状态ID
-    :return:
-    """
-    return title.get(status_id, title.get(-2))
+def get_push_title(status_id: int) -> str:
+    """获取推送标题"""
+    return PUSH_TITLES.get(status_id, PUSH_TITLES.get(-2))
 
 
 class PushHandler:
-    def __init__(self, config_file="push.ini"):
+    """推送处理器"""
+
+    def __init__(
+        self, config: Optional[PushConfig] = None, config_file: Optional[str] = None
+    ):
+        """
+        初始化推送处理器
+
+        Args:
+            config: 推送配置对象
+            config_file: 配置文件路径（如果提供config则优先使用config）
+        """
         self.http = get_new_session()
-        self.cfg = ConfigParser()
-        self.config_path = os.path.join(
-            os.path.dirname(os.path.realpath(__file__)), "config"
-        )
-        self.config_name = config_file
 
-    def get_config_path(self):
-        file_path = self.config_path
-        file_name = self.config_name
-        if os.getenv("AutoMihoyoBBS_push_path"):
-            file_path = os.getenv("AutoMihoyoBBS_push_path")
-        if os.getenv("AutoMihoyoBBS_push_name"):
-            file_name = os.getenv("AutoMihoyoBBS_push_name")
-        return os.path.join(file_path, file_name)
-
-    def load_config(self):
-        file_path = self.get_config_path()
-        if os.path.exists(file_path):
-            self.cfg.read(file_path, encoding="utf-8")
-            return True
+        if config:
+            self.config = config
         else:
-            if self.config_name != "push.ini":
-                logger.warning(f"配置文件 {file_path} 不存在！")
+            self.config = self._load_config_from_file(config_file)
+
+    def _load_config_from_file(self, config_file: Optional[str] = None) -> PushConfig:
+        """从配置文件加载配置"""
+        cfg = ConfigParser()
+        if config_file:
+            cfg.read(config_file, encoding="utf-8")
+        else:
+            # 默认读取配置文件的逻辑
+            cfg.read("config.ini", encoding="utf-8")
+
+        # 构建 PushConfig 对象
+        push_config = PushConfig(
+            enable=cfg.getboolean("setting", "enable", fallback=True),
+            error_push_only=cfg.getboolean(
+                "setting", "error_push_only", fallback=False
+            ),
+            push_servers=[
+                s.strip()
+                for s in cfg.get("setting", "push_server", fallback="")
+                .lower()
+                .split(",")
+                if s.strip()
+            ],
+            push_block_keys=[
+                k.strip()
+                for k in cfg.get("setting", "push_block_keys", fallback="").split(",")
+                if k.strip()
+            ],
+        )
+
+        # 加载各推送服务的配置
+        if cfg.has_section("telegram"):
+            push_config.telegram = {
+                "api_url": cfg.get("telegram", "api_url", fallback=""),
+                "bot_token": cfg.get("telegram", "bot_token", fallback=""),
+                "chat_id": cfg.get("telegram", "chat_id", fallback=""),
+                "http_proxy": cfg.get("telegram", "http_proxy", fallback=None),
+            }
+
+        if cfg.has_section("dingrobot"):
+            push_config.dingrobot = {
+                "webhook": cfg.get("dingrobot", "webhook", fallback=""),
+                "secret": cfg.get("dingrobot", "secret", fallback=""),
+            }
+
+        if cfg.has_section("feishubot"):
+            push_config.feishubot = {
+                "webhook": cfg.get("feishubot", "webhook", fallback=""),
+            }
+
+        if cfg.has_section("bark"):
+            push_config.bark = {
+                "api_url": cfg.get("bark", "api_url", fallback=""),
+                "token": cfg.get("bark", "token", fallback=""),
+                "icon": cfg.get("bark", "icon", fallback=""),
+            }
+
+        if cfg.has_section("gotify"):
+            push_config.gotify = {
+                "api_url": cfg.get("gotify", "api_url", fallback=""),
+                "token": cfg.get("gotify", "token", fallback=""),
+                "priority": cfg.getint("gotify", "priority", fallback=5),
+            }
+
+        if cfg.has_section("webhook"):
+            push_config.webhook = {
+                "webhook_url": cfg.get("webhook", "webhook_url", fallback=""),
+            }
+
+        return push_config
+
+    def _msg_replace(self, msg: str) -> str:
+        """消息内容关键词替换"""
+        if not self.config.push_block_keys:
+            return msg
+
+        result = str(msg)
+        for block_key in self.config.push_block_keys:
+            if block_key:
+                result = result.replace(block_key, "*" * len(block_key))
+        return result
+
+    def _prepare_message(
+        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+    ) -> str:
+        """准备消息内容"""
+        title = get_push_title(status_id)
+        message = f"{title}\n\n{push_message}"
+
+        if img_file:
+            base64_data = base64.b64encode(img_file).decode("utf-8")
+            message = f"{message}\n\n![图片](data:image/png;base64,{base64_data})"
+
+        return message
+
+    def _safe_log_error(self, service_name: str, exception: Exception):
+        """安全地记录错误日志，隐藏敏感字段"""
+        error_msg = str(exception)
+        # 替换常见的敏感字段
+        sensitive_keywords = ["token=", "secret=", "key=", "password="]
+        for keyword in sensitive_keywords:
+            idx = error_msg.find(keyword)
+            if idx != -1:
+                start_idx = idx + len(keyword)
+                end_idx = start_idx + 10  # 截断显示长度
+                error_msg = error_msg[:start_idx] + "***" + error_msg[end_idx:]
+        logger.error(f"{service_name} 推送失败: {error_msg}")
+
+    def telegram(
+        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+    ) -> bool:
+        """Telegram 推送"""
+        try:
+            config = self.config.telegram
+            if not all(
+                [
+                    config.get("api_url", "").strip(),
+                    config.get("bot_token", "").strip(),
+                    config.get("chat_id", "").strip(),
+                ]
+            ):
+                logger.warning("Telegram 配置不完整")
+                return False
+
+            message = self._prepare_message(status_id, push_message, img_file)
+            http_proxy = config.get("http_proxy")
+            session = get_new_session_use_proxy(http_proxy) if http_proxy else self.http
+
+            response = session.post(
+                url=f"https://{config['api_url']}/bot{config['bot_token']}/sendMessage",
+                data={
+                    "chat_id": config["chat_id"],
+                    "text": message,
+                },
+            )
+            response.raise_for_status()
+            logger.info("Telegram 推送成功")
+            return True
+        except Exception as e:
+            self._safe_log_error("Telegram", e)
             return False
 
-    # 推送消息中屏蔽关键词
-    def msg_replace(self, msg):
-        block_keys = []
+    def dingrobot(
+        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+    ) -> bool:
+        """钉钉群机器人推送"""
         try:
-            block_str = self.cfg.get("setting", "push_block_keys")
-            block_keys = block_str.split(",")
-        except:
-            return msg
-        else:
-            for block_key in block_keys:
-                block_key_trim = str(block_key).strip()
-                if block_key_trim:
-                    msg = str(msg).replace(block_key_trim, "*" * len(block_key_trim))
-            return msg
+            config = self.config.dingrobot
+            if not config.get("webhook", "").strip():
+                logger.warning("钉钉机器人配置不完整")
+                return False
 
-    def telegram(self, status_id, push_message):
-        http_proxy = self.cfg.get("telegram", "http_proxy", fallback=None)
-        session = get_new_session_use_proxy(http_proxy) if http_proxy else self.http
-        session.post(
-            url=f"https://{self.cfg.get('telegram', 'api_url')}/bot{self.cfg.get('telegram', 'bot_token')}/sendMessage",
-            data={
-                "chat_id": self.cfg.get("telegram", "chat_id"),
-                "text": get_push_title(status_id) + "\r\n" + push_message,
-            },
-        )
+            api_url = config["webhook"]
+            secret = config.get("secret")
 
-    def ftqq(self, status_id, push_message):
-        """
-        Server酱推送，具体推送位置在server酱后台配置
-        """
-        self.http.post(
-            url="https://sctapi.ftqq.com/{}.send".format(
-                self.cfg.get("setting", "push_token")
-            ),
-            data={"title": get_push_title(status_id), "desp": push_message},
-        )
+            # 签名计算
+            if secret:
+                timestamp = str(round(time.time() * 1000))
+                sign_string = f"{timestamp}\n{secret}"
+                hmac_code = hmac.new(
+                    key=secret.encode("utf-8"),
+                    msg=sign_string.encode("utf-8"),
+                    digestmod=hashlib.sha256,
+                ).digest()
+                sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+                api_url = f"{api_url}&timestamp={timestamp}&sign={sign}"
 
-    def pushplus(self, status_id, push_message):
-        """
-        PushPlus推送
-        """
-        self.http.post(
-            url="https://www.pushplus.plus/send",
-            data={
-                "token": self.cfg.get("setting", "push_token"),
-                "title": get_push_title(status_id),
-                "content": push_message,
-                "topic": self.cfg.get("setting", "topic"),
-            },
-        )
+            message = self._prepare_message(status_id, push_message, img_file)
 
-    def pushme(self, status_id, push_message):
-        """
-        PushMe推送
-        """
-        pushme_key = self.cfg.get("pushme", "token")
-        if not pushme_key:
-            logger.error("PushMe 推送失败！PUSHME_KEY 未设置")
-            return
-        logger.info("PushMe 服务启动")
-        data = {
-            "push_key": pushme_key,
-            "title": get_push_title(status_id),
-            "content": push_message,
-            "date": "",
-            "type": "",
-        }
-        logger.debug(f"PushMe 请求数据: {data}")
-        response = self.http.post(
-            url=self.cfg.get("pushme", "url", fallback="https://push.i-i.me/"),
-            data=data,
-        )
-        logger.debug(f"PushMe 响应状态码: {response.status_code}")
-        logger.debug(f"PushMe 响应内容: {response.text}")
-        if response.status_code == 200 and response.text == "success":
-            logger.info("PushMe 推送成功！")
-        else:
-            logger.error(f"PushMe 推送失败！{response.status_code} {response.text}")
-
-    def cqhttp(self, status_id, push_message):
-        """
-        OneBot V11(CqHttp)协议推送
-        """
-        qq = self.cfg.get("cqhttp", "cqhttp_qq", fallback=None)
-        group = self.cfg.get("cqhttp", "cqhttp_group", fallback=None)
-
-        if qq and group:
-            logger.error(
-                "请只填写 cqhttp_qq 或 cqhttp_group 的其中一个，不要同时填写！"
-            )
-            return
-
-        data = {"message": get_push_title(status_id) + "\r\n" + push_message}
-        if qq:
-            data["user_id"] = int(qq)
-        if group:
-            data["group_id"] = int(group)
-
-        self.http.post(url=self.cfg.get("cqhttp", "cqhttp_url"), json=data)
-
-    # 感谢 @islandwind 提供的随机壁纸api 个人主页：https://space.bilibili.com/7600422
-    def smtp(self, status_id, push_message):
-        """
-        SMTP 电子邮件推送
-        """
-        import smtplib
-        from email.mime.text import MIMEText
-
-        def get_background_url():
-            try:
-                _image_url = self.http.get(
-                    "https://api.iw233.cn/api.php?sort=random&type=json"
-                ).json()["pic"][0]
-            except:
-                _image_url = "unable to get the image"
-                logger.warning("获取随机背景图失败，请检查图片 api")
-            return _image_url
-
-        def get_background_img_html(background_url):
-            if background_url:
-                return f'<img src="{background_url}" alt="background" style="width: 100%; filter: brightness(50%)">'
-            return ""
-
-        def get_background_img_info(background_url):
-            if background_url:
-                return (
-                    f'<p style="color: #fff;text-shadow:0px 0px 10px #000;">背景图片链接</p>\n'
-                    f'<a href="{background_url}" style="color: #fff;text-shadow:0px 0px 10px #000;">{background_url}</a>'
-                )
-            return ""
-
-        image_url = None
-        if self.cfg.getboolean("smtp", "background", fallback=True):
-            image_url = get_background_url()
-
-        with open("assets/email_example.html", encoding="utf-8") as f:
-            EMAIL_TEMPLATE = f.read()
-        message = EMAIL_TEMPLATE.format(
-            title=get_push_title(status_id),
-            message=push_message.replace("\n", "<br/>"),
-            background_image=get_background_img_html(image_url),
-            background_info=get_background_img_info(image_url),
-        )
-        smtp_info = self.cfg["smtp"]
-        message = MIMEText(message, "html", "utf-8")
-        message["Subject"] = smtp_info["subject"]
-        message["To"] = smtp_info["toaddr"]
-        message["From"] = f"{smtp_info['subject']}<{smtp_info['fromaddr']}>"
-        if self.cfg.getboolean("smtp", "ssl_enable"):
-            server = smtplib.SMTP_SSL(
-                smtp_info["mailhost"], self.cfg.getint("smtp", "port")
-            )
-        else:
-            server = smtplib.SMTP(
-                smtp_info["mailhost"], self.cfg.getint("smtp", "port")
-            )
-        server.login(smtp_info["username"], smtp_info["password"])
-        server.sendmail(smtp_info["fromaddr"], smtp_info["toaddr"], message.as_string())
-        server.close()
-        logger.info("邮件发送成功啦")
-
-    def wecom(self, status_id, push_message):
-        """
-        企业微信推送
-        感谢linjie5493@github 提供的代码
-        """
-        secret = self.cfg.get("wecom", "secret")
-        corpid = self.cfg.get("wecom", "wechat_id")
-        try:
-            touser = self.cfg.get("wecom", "touser")
-        except NoOptionError:
-            # 没有配置时赋默认值
-            touser = "@all"
-
-        push_token = self.http.post(
-            url=f"https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={corpid}&corpsecret={secret}",
-            data="",
-        ).json()["access_token"]
-        push_data = {
-            "agentid": self.cfg.get("wecom", "agentid"),
-            "msgtype": "text",
-            "touser": touser,
-            "text": {"content": get_push_title(status_id) + "\r\n" + push_message},
-            "safe": 0,
-        }
-        self.http.post(
-            f"https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={push_token}",
-            json=push_data,
-        )
-
-    def wecomrobot(self, status_id, push_message):
-        """
-        企业微信机器人
-        """
-        rep = self.http.post(
-            url=f'{self.cfg.get("wecomrobot", "url")}',
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            json={
-                "msgtype": "text",
-                "text": {
-                    "content": get_push_title(status_id) + "\r\n" + push_message,
-                    "mentioned_mobile_list": [
-                        f'{self.cfg.get("wecomrobot", "mobile")}'
-                    ],
+            response = self.http.post(
+                url=api_url,
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                json={
+                    "msgtype": "text",
+                    "text": {"content": message},
                 },
-            },
-        ).json()
-        logger.info(f"推送结果：{rep.get('errmsg')}")
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"钉钉推送结果: {result.get('errmsg', '未知')}")
+            return result.get("errcode", 1) == 0
+        except Exception as e:
+            self._safe_log_error("钉钉", e)
+            return False
 
-    def pushdeer(self, status_id, push_message):
-        """
-        PushDeer推送
-        """
-        self.http.get(
-            url=f'{self.cfg.get("pushdeer", "api_url")}/message/push',
-            params={
-                "pushkey": self.cfg.get("pushdeer", "token"),
-                "text": get_push_title(status_id),
-                "desp": str(push_message).replace("\r\n", "\r\n\r\n"),
-                "type": "markdown",
-            },
-        )
+    def feishubot(
+        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+    ) -> bool:
+        """飞书机器人推送"""
+        try:
+            config = self.config.feishubot
+            if not config.get("webhook", "").strip():
+                logger.warning("飞书机器人配置不完整")
+                return False
 
-    def dingrobot(self, status_id, push_message):
-        """
-        钉钉群机器人推送
-        """
-        api_url = self.cfg.get(
-            "dingrobot", "webhook"
-        )  # https://oapi.dingtalk.com/robot/send?access_token=XXX
-        secret = self.cfg.get("dingrobot", "secret")  # 安全设置 -> 加签 -> 密钥 -> SEC*
-        if secret:
-            timestamp = str(round(time.time() * 1000))
-            sign_string = f"{timestamp}\n{secret}"
-            hmac_code = hmac.new(
-                key=secret.encode("utf-8"),
-                msg=sign_string.encode("utf-8"),
-                digestmod=hashlib.sha256,
-            ).digest()
-            sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
-            api_url = f"{api_url}&timestamp={timestamp}&sign={sign}"
+            message = self._prepare_message(status_id, push_message, img_file)
 
-        rep = self.http.post(
-            url=api_url,
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            json={
-                "msgtype": "text",
-                "text": {"content": get_push_title(status_id) + "\r\n" + push_message},
-            },
-        ).json()
-        logger.info(f"推送结果：{rep.get('errmsg')}")
+            response = self.http.post(
+                url=config["webhook"],
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                json={
+                    "msg_type": "text",
+                    "content": {"text": message},
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"飞书推送结果: {result.get('msg', '未知')}")
+            return result.get("StatusCode", 1) == 0
+        except Exception as e:
+            self._safe_log_error("飞书", e)
+            return False
 
-    def feishubot(self, status_id, push_message):
-        """
-        飞书机器人(WebHook)
-        """
-        api_url = self.cfg.get(
-            "feishubot", "webhook"
-        )  # https://open.feishu.cn/open-apis/bot/v2/hook/XXX
-        rep = self.http.post(
-            url=api_url,
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            json={
-                "msg_type": "text",
-                "content": {"text": get_push_title(status_id) + "\r\n" + push_message},
-            },
-        ).json()
-        logger.info(f"推送结果：{rep.get('msg')}")
+    def bark(
+        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+    ) -> bool:
+        """Bark 推送"""
+        try:
+            config = self.config.bark
+            if not all(
+                [
+                    config.get("api_url", "").strip(),
+                    config.get("token", "").strip(),
+                ]
+            ):
+                logger.warning("Bark 配置不完整")
+                return False
 
-    def bark(self, status_id, push_message):
-        """
-        Bark推送
-        """
-        # make send_title and push_message to url encode
-        send_title = urllib.parse.quote_plus(get_push_title(status_id))
-        push_message = urllib.parse.quote_plus(push_message)
-        rep = self.http.get(
-            url=f'{self.cfg.get("bark", "api_url")}/{self.cfg.get("bark", "token")}/{send_title}/{push_message}?'
-            f'icon=https://cdn.jsdelivr.net/gh/tanmx/pic@main/mihoyo/{self.cfg.get("bark", "icon")}.png'
-        ).json()
-        logger.info(f"推送结果：{rep.get('message')}")
+            send_title = urllib.parse.quote_plus(get_push_title(status_id))
+            encoded_message = urllib.parse.quote_plus(push_message)
 
-    def gotify(self, status_id, push_message):
-        """
-        gotify
-        """
-        rep = self.http.post(
-            url=f'{self.cfg.get("gotify", "api_url")}/message?token={self.cfg.get("gotify", "token")}',
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            json={
-                "title": get_push_title(status_id),
-                "message": push_message,
-                "priority": self.cfg.getint("gotify", "priority"),
-            },
-        ).json()
-        logger.info(f"推送结果：{rep.get('errmsg')}")
+            icon_param = f"&icon=https://cdn.jsdelivr.net/gh/tanmx/pic@main/mihoyo/{config.get('icon', 'default')}.png"
 
-    def webhook(self, status_id, push_message):
+            response = self.http.get(
+                url=f'{config["api_url"]}/{config["token"]}/{send_title}/{encoded_message}?{icon_param}'
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"Bark 推送结果: {result.get('message', '未知')}")
+            return True
+        except Exception as e:
+            self._safe_log_error("Bark", e)
+            return False
+
+    def gotify(
+        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+    ) -> bool:
+        """Gotify 推送"""
+        try:
+            config = self.config.gotify
+            if not all(
+                [
+                    config.get("api_url", "").strip(),
+                    config.get("token", "").strip(),
+                ]
+            ):
+                logger.warning("Gotify 配置不完整")
+                return False
+
+            message = self._prepare_message(status_id, push_message, img_file)
+
+            response = self.http.post(
+                url=f'{config["api_url"]}/message?token={config["token"]}',
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                json={
+                    "title": get_push_title(status_id),
+                    "message": message,
+                    "priority": config.get("priority", 5),
+                },
+            )
+            response.raise_for_status()
+            logger.info("Gotify 推送成功")
+            return True
+        except Exception as e:
+            self._safe_log_error("Gotify", e)
+            return False
+
+    def webhook(
+        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+    ) -> bool:
+        """WebHook 推送"""
+        try:
+            config = self.config.webhook
+            if not config.get("webhook_url", "").strip():
+                logger.warning("WebHook 配置不完整")
+                return False
+
+            message = self._prepare_message(status_id, push_message, img_file)
+
+            response = self.http.post(
+                url=config["webhook_url"],
+                headers={"Content-Type": "application/json; charset=utf-8"},
+                json={
+                    "title": get_push_title(status_id),
+                    "message": message,
+                },
+            )
+            response.raise_for_status()
+            logger.info("WebHook 推送成功")
+            return True
+        except Exception as e:
+            self._safe_log_error("WebHook", e)
+            return False
+
+    def push(
+        self, status: int = 0, push_message: str = "", img_file: Optional[bytes] = None
+    ) -> bool:
         """
-        WebHook
+        执行推送
+
+        Args:
+            status: 状态码
+            push_message: 推送消息内容
+            img_file: 图片文件二进制数据
+
+        Returns:
+            bool: 是否全部推送成功
         """
-        rep = self.http.post(
-            url=f'{self.cfg.get("webhook", "webhook_url")}',
-            headers={"Content-Type": "application/json; charset=utf-8"},
-            json={"title": get_push_title(status_id), "message": push_message},
-        ).json()
-        logger.info(f"推送结果：{rep.get('errmsg')}")
+        logger.debug(f"消息内容: {push_message}")
 
-    def serverchan3(self, status_id, push_message):
-        sendkey = self.cfg.get("serverchan3", "sendkey")
-        match = re.match(r"sctp(\d+)t", sendkey)
-        if match:
-            num = match.group(1)
-            url = f"https://{num}.push.ft07.com/send/{sendkey}.send"
-        else:
-            raise ValueError("Invalid sendkey format for sctp")
-        data = {
-            "title": get_push_title(status_id),
-            "desp": push_message,
-            "tags": self.cfg.get("serverchan3", "tags", fallback=""),
-        }
-        rep = self.http.post(url=url, json=data)
-        logger.debug(rep.text)
+        # 检查推送条件
+        if not self.config.enable:
+            logger.info("推送功能已禁用")
+            return True
 
-    # 其他推送方法，例如 ftqq, pushplus 等, 和 telegram 方法相似
-    # 在类内部直接使用 self.cfg 读取配置
+        if self.config.error_push_only and status == 0:
+            logger.info("仅错误时推送，当前状态为成功，跳过推送")
+            return True
 
-    def push(self, status, push_message, img_file=None):
-        logger.debug("消息内容: {}".format(push_message))
-        if not self.load_config():
-            return 1
-        if not self.cfg.getboolean("setting", "enable"):
-            return 0
-        if (
-            self.cfg.getboolean("setting", "error_push_only", fallback=False)
-            and status == 0
-        ):
-            return 0
-        logger.info("正在执行推送......")
-        func_names = self.cfg.get("setting", "push_server").lower()
-        push_success = True
-        for func_name in func_names.split(","):
-            func = getattr(self, func_name, None)
-            if not func:
-                logger.warning(f"推送服务名称错误：{func_name}")
+        logger.info("正在执行推送...")
+        processed_message = self._msg_replace(push_message)
+
+        # 执行推送
+        all_success = True
+        for push_server in self.config.push_servers:
+            if push_server not in PUSH_METHODS:
+                logger.warning(f"不支持的推送服务: {push_server}")
                 continue
-            logger.debug(f"推送所用的服务为: {func_name}")
+
+            logger.debug(f"使用推送服务: {push_server}")
             try:
-                if not config.update_config_need:
-                    func(status, self.msg_replace(push_message))
+                push_method = getattr(self, push_server)
+                success = push_method(status, processed_message, img_file)
+                if success:
+                    logger.info(f"{push_server} - 推送成功")
                 else:
-                    func(
-                        -1,
-                        f"如果您多次收到此消息开头的推送，证明您运行的环境无法自动更新config，请手动更新一下，谢谢\r\n"
-                        f'{title.get(status, "")}\r\n{self.msg_replace(push_message)}',
-                    )
+                    logger.warning(f"{push_server} - 推送失败")
+                    all_success = False
             except Exception as e:
-                logger.warning(f"{func_name} 推送执行错误：{str(e)}")
-                push_success = False
-                continue
-            logger.info(f"{func_name} - 推送完毕......")
-        return 0 if push_success else 1
+                self._safe_log_error(push_server, e)
+                all_success = False
+
+        return all_success
 
 
-def push(status=0, push_message="", img_file=None):
+# 全局推送函数（保持向后兼容）
+def push(
+    status: int = 0,
+    push_message: str = "",
+    img_file: Optional[bytes] = None,
+    config: Optional[PushConfig] = None,
+    config_file: Optional[str] = None,
+) -> bool:
     """
     推送消息到指定平台
 
     Args:
-        status (int): 推送状态码，默认为0
-        push_message (str): 推送的消息内容，默认为空字符串
-        img_file (str or None): 推送的图片文件路径，默认为None
+        status: 推送状态码
+        push_message: 推送消息内容
+        img_file: 图片文件二进制数据
+        config: 推送配置对象
+        config_file: 配置文件路径
 
     Returns:
-        推送结果，具体类型取决于PushHandler的实现
+        bool: 推送是否成功
     """
-    push_handler_instance = PushHandler()
-    return push_handler_instance.push(status, push_message, img_file)
+    # 如果提供了config参数，优先使用
+    if config:
+        push_handler = PushHandler(config=config)
+    # 如果提供了config_file参数，使用配置文件
+    elif config_file:
+        push_handler = PushHandler(config_file=config_file)
+    # 如果有全局配置，使用全局配置
+    elif _global_push_config:
+        push_handler = PushHandler(config=_global_push_config)
+    # 否则使用默认配置
+    else:
+        push_handler = PushHandler()
+
+    return push_handler.push(status, push_message, img_file)
 
 
+# 全局配置实例
+_global_push_config: Optional[PushConfig] = None
+
+
+def initConfig(config: PushConfig) -> None:
+    """
+    初始化全局推送配置
+
+    Args:
+        config: PushConfig 实例，用于设置全局推送配置
+    """
+    global _global_push_config
+    _global_push_config = config
+
+
+# 使用示例
 if __name__ == "__main__":
+    # 方式1: 使用默认配置
     push(0, f"推送验证{int(time.time())}")
+
+    # 方式2: 通过代码配置
+    custom_config = PushConfig(
+        enable=True,
+        error_push_only=False,
+        push_servers=["telegram"],
+        telegram={
+            "api_url": "api.telegram.org",
+            "bot_token": "your_bot_token",
+            "chat_id": "your_chat_id",
+        },
+    )
+
+    initConfig(custom_config)
+
+    # 后续调用push时无需再传递配置
+    push(0, f"推送验证{int(time.time())}")
+
+    # 方式3: 使用指定配置文件
+    # push(0, "测试消息", config_file="custom_config.ini")
