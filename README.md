@@ -49,5 +49,19 @@ my_project/
 定时类型：crontab
 定时规则：2 2 28 * *
 白名单：ql_main.py
-依赖文件：.py
+依赖文件：.py|config.example.json
+```
+
+### 依赖管理
+
+python3 -> 创建依赖 -> 自动拆分 ✓ ：
+
+```
+httpx
+requests
+qrcode
+pydantic
+tenacity
+pytz
+pydantic-settings
 ```
