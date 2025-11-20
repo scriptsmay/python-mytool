@@ -36,7 +36,7 @@ async def manually_game_sign():
 
     msgs_list = []
 
-    logger.info("⏳开始为所有用户执行游戏签到...")
+    # logger.info("⏳开始为所有用户执行游戏签到...")
     # 确保顺序执行
     users = list(get_unique_users())  # 转换为列表确保顺序
     for user_id_, user_ in users:
@@ -129,15 +129,10 @@ async def perform_game_sign(user: UserData, msgs_list=list[str]):
     执行游戏签到函数，并发送给用户签到消息。
 
     :param user: 用户数据
-    :param user_ids: 发送通知的所有用户ID
-    :param matcher: 事件响应器
-    :param event: 事件
     """
     failed_accounts = []
     for account in user.accounts.values():
-        # 自动签到时，要求用户打开了签到功能；手动签到时都可以调用执行。
-        if not account.enable_game_sign:
-            continue
+
         signed = False
         """是否已经完成过签到"""
         game_record_status, records = await get_game_record(account)
@@ -194,45 +189,42 @@ async def perform_game_sign(user: UserData, msgs_list=list[str]):
                         )
                     else:
                         message = f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败，请稍后再试"
+
                     msgs_list.append(message)
-                    # if user.enable_notice:
-                    #     # TODO: test 发送通知
-                    #     push(push_message=message)
 
                     await asyncio.sleep(project_config.preference.sleep_time)
                     continue
 
                 await asyncio.sleep(project_config.preference.sleep_time)
 
-            # 用户打开通知或手动签到时，进行通知
-            if user.enable_notice:
-                get_info_status, info = await signer.get_info(account.platform)
-                get_award_status, awards = await signer.get_rewards()
-                if not get_info_status or not get_award_status:
-                    msg = f"⚠️账户 {account.display_name} 🎮『{signer.name}』获取签到结果失败！请手动前往米游社查看"
+            get_info_status, info = await signer.get_info(account.platform)
+            get_award_status, awards = await signer.get_rewards()
+            if not get_info_status or not get_award_status:
+                msg = f"⚠️账户 {account.display_name} 🎮『{signer.name}』获取签到结果失败！请手动前往米游社查看"
+            else:
+                award = awards[info.total_sign_day - 1]
+                if info.is_sign:
+                    status = "签到成功！" if not signed else "已经签到过了"
+                    msg = (
+                        f"🪪账户 {account.display_name}"
+                        f"\n🎮『{signer.name}』"
+                        f"\n🎮状态: {status}"
+                        f"\n{signer.record.nickname}·{signer.record.level}"
+                        "\n\n🎁今日签到奖励："
+                        f"\n{award.name} * {award.cnt}"
+                        f"\n\n📅本月签到次数：{info.total_sign_day}"
+                    )
+                    img_file = await get_file(award.icon)
+                    msgs_list.append(msg)
+                    push(push_message=msg, img_file=img_file)
                 else:
-                    award = awards[info.total_sign_day - 1]
-                    if info.is_sign:
-                        status = "签到成功！" if not signed else "已经签到过了"
-                        msg = (
-                            f"🪪账户 {account.display_name}"
-                            f"\n🎮『{signer.name}』"
-                            f"\n🎮状态: {status}"
-                            f"\n{signer.record.nickname}·{signer.record.level}"
-                            "\n\n🎁今日签到奖励："
-                            f"\n{award.name} * {award.cnt}"
-                            f"\n\n📅本月签到次数：{info.total_sign_day}"
-                        )
-                        img_file = await get_file(award.icon)
-                        msgs_list.append(msg)
-                        push(push_message=msg, img_file=img_file)
-                    else:
-                        msg = (
-                            f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败！请尝试重新签到，"
-                            "若多次失败请尝试重新登录绑定账户"
-                        )
+                    msg = (
+                        f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败！请尝试重新签到，"
+                        "若多次失败请尝试重新登录绑定账户"
+                    )
 
-                # push(push_message=msg)
+            # push(push_message=msg)
+            msgs_list.append(msg)
             await asyncio.sleep(project_config.preference.sleep_time)
 
         if msgs_list:
@@ -240,9 +232,9 @@ async def perform_game_sign(user: UserData, msgs_list=list[str]):
                 push(push_message=msg)
 
         if not games_has_record:
-            push(
-                push_message=f"⚠️您的米游社账户 {account.display_name} 下不存在任何游戏账号，已跳过签到"
-            )
+            message = f"⚠️您的米游社账户 {account.display_name} 下不存在任何游戏账号，已跳过签到"
+            msgs_list.append(message)
+            push(push_message=message)
 
     # # 如果全部登录失效，则关闭通知
     # if len(failed_accounts) == len(user.accounts):

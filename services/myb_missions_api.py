@@ -191,7 +191,7 @@ class BaseMission:
                                     if await verify_verification(
                                         mmt_data, geetest_result, self.account
                                     ):
-                                        logger.success(
+                                        logger.info(
                                             f"米游币任务 - 讨论区签到: 用户 {self.account.display_name} 人机验证通过"
                                         )
                                         continue

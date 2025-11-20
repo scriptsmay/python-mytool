@@ -257,7 +257,7 @@ class BaseGameSign:
                             api_result.data
                         )
                     else:
-                        logger.success(
+                        logger.info(
                             f"游戏签到 - 用户 {self.account.display_name} 签到成功"
                         )
                         logger.debug(f"网络请求返回: {res.text}")
