@@ -4,6 +4,8 @@ from typing import Union, Optional, Any, Dict, TYPE_CHECKING
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
+from models.push_config import PushConfig
+
 # 修正导入路径 - 根据实际目录结构调整
 try:
     from models.common import data_path
@@ -46,8 +48,6 @@ class Preference(BaseModel):
     """最大网络请求重试次数"""
     retry_interval: float = 2
     """网络请求重试间隔（单位：秒）（除兑换请求外）"""
-    timezone: Optional[str] = "Asia/Shanghai"
-    """兑换时所用的时区"""
     encoding: str = "utf-8"
     """文件读写编码"""
     sleep_time: float = 2
@@ -185,6 +185,8 @@ class PluginConfig(BaseSettings):
     """插件配置"""
 
     preference: Preference = Preference()
+
+    push_config: PushConfig = PushConfig()
 
     class Config:
         """Pydantic配置"""

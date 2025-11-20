@@ -11,8 +11,27 @@ from models import (
     UserData,
     GenshinNoteNotice,
     StarRailNoteNotice,
+    PushConfig,
 )
-from utils import get_file, logger, push, get_unique_users, get_validate
+from utils import (
+    get_file,
+    logger,
+    push,
+    PushConfig as UtilsPushConfig,
+    initConfig,
+    get_unique_users,
+    get_validate,
+)
+
+
+# 使用 plugin_config 初始化推送配置
+try:
+    push_conf = UtilsPushConfig(PushConfig(plugin_config.push_config))
+    initConfig(push_conf)
+except Exception as e:
+    logger.error(f"初始化消息推送配置失败: {e}")
+    # logger.exception(e)
+    push_conf = UtilsPushConfig(enable=False)
 
 
 async def manually_game_sign():
@@ -136,7 +155,7 @@ async def perform_game_sign(user: UserData, msgs_list=None):
                         message = f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败，请稍后再试"
                     msgs_list.append(message)
                     if user.enable_notice:
-                        # todo 发送通知
+                        # TODO: test 发送通知
                         push(push_message=message)
 
                     await asyncio.sleep(plugin_config.preference.sleep_time)
@@ -173,7 +192,7 @@ async def perform_game_sign(user: UserData, msgs_list=None):
                             "若多次失败请尝试重新登录绑定账户"
                         )
 
-                push(push_message=msg)
+                # push(push_message=msg)
             await asyncio.sleep(plugin_config.preference.sleep_time)
 
         if msgs_list:
