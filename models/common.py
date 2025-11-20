@@ -1,11 +1,12 @@
 import inspect
 import time
-from abc import abstractmethod
+
+# from abc import abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, NamedTuple, no_type_check, Union, Dict, Any, TypeVar, Tuple
+from typing import Optional, NamedTuple, no_type_check, Dict, Any, TypeVar, Tuple
 
-import pytz
+# import pytz
 from pydantic import BaseModel
 
 __all__ = [
@@ -37,11 +38,24 @@ __all__ = [
     "GeetestResultV4",
 ]
 
-root_path = Path(__name__).parent.absolute()
+# 修改：使用 __file__ 替代 __name__
+root_path = Path(__file__).parent.absolute()
 """项目根目录"""
 
 data_path = root_path / "data"
 """数据保存目录"""
+
+
+def format_recovery_time(seconds: int) -> str:
+    """通用恢复时间格式化函数"""
+    if not seconds:
+        return ":未获得时间数据"
+    elif seconds == 0:
+        return "已准备就绪"
+    else:
+        recovery_timestamp = int(time.time()) + seconds
+        recovery_datetime = datetime.fromtimestamp(recovery_timestamp)
+        return f"将在{recovery_datetime.strftime('%m-%d %H:%M')}回满"
 
 
 class BaseModelWithSetter(BaseModel):
@@ -56,7 +70,7 @@ class BaseModelWithSetter(BaseModel):
     def __setattr__(self, name, value):
         try:
             super().__setattr__(name, value)
-        except ValueError as e:
+        except Exception as e:
             setters = inspect.getmembers(
                 self.__class__,
                 predicate=lambda x: isinstance(x, property) and x.fset is not None,
@@ -75,21 +89,6 @@ class BaseModelWithUpdate(BaseModel):
     """
 
     _T = TypeVar("_T", bound=BaseModel)
-
-    # @abstractmethod
-    # def update(self, obj: Union[_T, Dict[str, Any]]) -> _T:
-    #     """
-    #     更新数据对象
-
-    #     :param obj: 新的数据对象或属性字典
-    #     :raise TypeError
-    #     """
-    #     if isinstance(obj, type(self)):
-    #         obj = obj.dict()
-    #     items = filter(lambda x: x[0] in self.__fields__, obj.items())
-    #     for k, v in items:
-    #         setattr(self, k, v)
-    #     return self
 
 
 class GameRecord(BaseModel):
@@ -245,17 +244,7 @@ class GenshinNote(BaseModel):
         """
         剩余树脂恢复文本
         """
-        try:
-            if not self.resin_recovery_time:
-                return ":未获得时间数据"
-            elif self.resin_recovery_time == 0:
-                return "已准备就绪"
-            else:
-                recovery_timestamp = int(time.time()) + self.resin_recovery_time
-                recovery_datetime = datetime.fromtimestamp(recovery_timestamp)
-                return f"将在{recovery_datetime.strftime('%m-%d %H:%M')}回满"
-        except (KeyError, TypeError):
-            return None
+        return format_recovery_time(self.resin_recovery_time)
 
 
 class StarRailNote(BaseModel):
@@ -289,17 +278,7 @@ class StarRailNote(BaseModel):
         """
         剩余体力恢复文本
         """
-        try:
-            if not self.stamina_recover_time:
-                return ":未获得时间数据"
-            elif self.stamina_recover_time == 0:
-                return "已准备就绪"
-            else:
-                recovery_timestamp = int(time.time()) + self.stamina_recover_time
-                recovery_datetime = datetime.fromtimestamp(recovery_timestamp)
-                return f"将在{recovery_datetime.strftime('%m-%d %H:%M')}回满"
-        except (KeyError, TypeError):
-            return None
+        return format_recovery_time(self.stamina_recover_time)
 
 
 class GenshinNoteNotice(GenshinNote):
@@ -312,7 +291,7 @@ class GenshinNoteNotice(GenshinNote):
     current_resin_full: bool = False
     """是否溢出"""
     current_home_coin: bool = False
-    transformer: bool = False
+    transformer_ready: bool = False  # 修改字段名避免歧义
 
 
 class StarRailNoteNotice(StarRailNote):
@@ -354,7 +333,7 @@ class BaseApiStatus(BaseModel):
         """
         返回错误类型
         """
-        for key, field in self.__fields__.items():
+        for key in sorted(self.__fields__.keys()):  # 确保稳定顺序
             if getattr(self, key, False) and key != "success":
                 return key
         return None
@@ -460,8 +439,13 @@ class QueryGameTokenQrCodeStatus(BaseApiStatus):
     """二维码已扫描但未确认"""
 
 
-GeetestResult = NamedTuple("GeetestResult", validate=str, seccode=str)
-"""人机验证结果数据"""
+class GeetestResult(NamedTuple):
+    """
+    人机验证结果数据
+    """
+
+    validate: str
+    seccode: str
 
 
 class GeetestResultV4(BaseModel):

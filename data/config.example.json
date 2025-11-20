@@ -63,5 +63,21 @@
         }
       }
     }
+  },
+  "push_config": {
+    "enable": false,
+    "error_push_only": false,
+    "push_servers": ["telegram", "gotify"],
+    "telegram": {
+      "api_url": "",
+      "bot_token": "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "chat_id": "1234567890",
+      "http_proxy": ""
+    },
+    "gotify": {
+      "api_url": "https://gotify.example.com",
+      "token": "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      "priority": 5
+    }
   }
 }

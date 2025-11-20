@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Union, Optional, Any, Dict, TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 
 from models.push_config import PushConfig
@@ -58,7 +58,9 @@ class Preference(BaseModel):
     """极验Geetest人机验证打码接口URL"""
     geetest_params: Optional[Dict[str, Any]] = None
     """极验Geetest人机验证打码API发送的参数（除gt，challenge外）"""
-    geetest_json: Optional[Dict[str, Any]] = {"gt": "{gt}", "challenge": "{challenge}"}
+    geetest_json: Optional[Dict[str, Any]] = Field(
+        default_factory=lambda: {"gt": "{gt}", "challenge": "{challenge}"}
+    )
     """极验Geetest人机验证打码API发送的JSON数据 `{gt}`, `{challenge}` 为占位符"""
     override_device_and_salt: bool = False
     """是否读取插件数据文件中的 device_config 设备配置 和 salt_config 配置而不是默认配置（一般情况不建议开启）"""
@@ -73,17 +75,23 @@ class Preference(BaseModel):
     resin_interval: int = 30
     """原石恢复提醒间隔（单位：分钟）"""
 
+    _TARGET_TIME_STR = "20:00"
+    _TARGET_TIME_OBJ = datetime.strptime(_TARGET_TIME_STR, "%H:%M")
+
     @property
     def notice_time(self) -> bool:
         """检查是否在提醒时间内"""
-        now_hour = datetime.now().hour
-        now_minute = datetime.now().minute
-        set_time = "20:00"
-        notice_time = int(set_time[:2]) * 60 + int(set_time[3:])
-        start_time = notice_time - self.resin_interval
-        end_time = notice_time + self.resin_interval
-        current_time = now_hour * 60 + now_minute
-        return start_time <= current_time <= end_time
+        now = datetime.now()
+        now_minute_total = now.hour * 60 + now.minute
+        try:
+            target_minute_total = (
+                self._TARGET_TIME_OBJ.hour * 60 + self._TARGET_TIME_OBJ.minute
+            )
+        except ValueError:
+            return False  # 不合法的时间格式返回False
+        start_time = target_minute_total - self.resin_interval
+        end_time = target_minute_total + self.resin_interval
+        return start_time <= now_minute_total <= end_time
 
     class Config:
         """Pydantic配置"""
@@ -209,19 +217,37 @@ class PluginEnv(BaseSettings):
         extra = "ignore"
 
 
-# 修正：添加logger的定义或导入
+# 完善 fallback logger
 try:
     import logging
 
     logger = logging.getLogger(__name__)
 except ImportError:
-    # 简单的logger回退
+
     class SimpleLogger:
+        def __init__(self):
+            self.level = logging.INFO
+
+        def setLevel(self, level):
+            self.level = level
+
         def info(self, msg):
-            print(f"INFO: {msg}")
+            if self.level <= logging.INFO:
+                print(f"[INFO] {msg}")
+
+        def warning(self, msg):
+            if self.level <= logging.WARNING:
+                print(f"[WARNING] {msg}")
+
+        def error(self, msg):
+            if self.level <= logging.ERROR:
+                print(f"[ERROR] {msg}")
 
         def exception(self, msg):
-            print(f"ERROR: {msg}")
+            import traceback
+
+            if self.level <= logging.ERROR:
+                print(f"[EXCEPTION] {msg}\n{traceback.format_exc()}")
 
     logger = SimpleLogger()
 
@@ -234,16 +260,20 @@ try:
         plugin_config = PluginConfig()
         # 创建默认配置文件
         try:
-            str_data = plugin_config.json(indent=4)
+            import json
+
+            str_data = json.dumps(
+                plugin_config.model_dump(), indent=4, ensure_ascii=False
+            )
             project_config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(project_config_path, "w", encoding="utf-8") as f:
                 f.write(str_data)
-        except (AttributeError, TypeError, ValueError, PermissionError) as e:
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            logger.exception(f"序列化插件配置失败: {e}")
+        except (PermissionError, OSError) as e:
             logger.exception(
                 f"创建插件配置文件失败，请检查是否有权限读取和写入 {project_config_path}: {e}"
             )
-            # 如果创建失败，使用默认配置
-            plugin_config = PluginConfig()
         else:
             logger.info(
                 f"插件配置文件 {project_config_path} 不存在，已创建默认插件配置文件。"

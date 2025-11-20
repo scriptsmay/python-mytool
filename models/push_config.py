@@ -4,9 +4,9 @@ from pydantic import (
     field_validator,
     model_validator,
     ConfigDict,
-    FieldValidationInfo,
+    ValidationInfo,
 )
-from typing import Optional, Dict, Any, List, ClassVar
+from typing import Optional, Dict, Any, List, ClassVar, Callable
 from datetime import datetime
 
 
@@ -24,11 +24,14 @@ class TelegramConfig(BaseModel):
 
     @field_validator("api_url", "bot_token", "chat_id")
     @classmethod
-    def check_required_fields(cls, v: str, info: FieldValidationInfo) -> str:
+    def check_required_fields(cls, v: str, info: ValidationInfo) -> str:
         field_name = info.field_name
         if not v and field_name in ["bot_token", "chat_id"]:
             raise ValueError(f"{field_name} 是必填字段")
         return v
+
+    def is_configured(self) -> bool:
+        return bool(self.bot_token and self.chat_id)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -48,6 +51,9 @@ class DingRobotConfig(BaseModel):
             raise ValueError("webhook 是必填字段")
         return v
 
+    def is_configured(self) -> bool:
+        return bool(self.webhook)
+
     model_config = ConfigDict(extra="ignore")
 
 
@@ -64,6 +70,9 @@ class FeishuBotConfig(BaseModel):
             raise ValueError("webhook 是必填字段")
         return v
 
+    def is_configured(self) -> bool:
+        return bool(self.webhook)
+
     model_config = ConfigDict(extra="ignore")
 
 
@@ -79,10 +88,13 @@ class BarkConfig(BaseModel):
 
     @field_validator("api_url", "token")
     @classmethod
-    def check_required_fields(cls, v: str, info: FieldValidationInfo) -> str:
+    def check_required_fields(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             raise ValueError(f"{info.field_name} 是必填字段")
         return v
+
+    def is_configured(self) -> bool:
+        return bool(self.api_url and self.token)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -99,10 +111,13 @@ class GotifyConfig(BaseModel):
 
     @field_validator("api_url", "token")
     @classmethod
-    def check_required_fields(cls, v: str, info: FieldValidationInfo) -> str:
+    def check_required_fields(cls, v: str, info: ValidationInfo) -> str:
         if not v:
             raise ValueError(f"{info.field_name} 是必填字段")
         return v
+
+    def is_configured(self) -> bool:
+        return bool(self.api_url and self.token)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -129,9 +144,14 @@ class WebhookConfig(BaseModel):
     @field_validator("method")
     @classmethod
     def check_method(cls, v: str) -> str:
-        if v.upper() not in ["GET", "POST", "PUT"]:
+        allowed_methods = {"GET", "POST", "PUT"}
+        upper_v = v.upper()
+        if upper_v not in allowed_methods:
             raise ValueError("method 必须是 GET、POST 或 PUT")
-        return v.upper()
+        return upper_v
+
+    def is_configured(self) -> bool:
+        return bool(self.webhook_url)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -229,7 +249,9 @@ class PushConfig(BaseModel):
         # 检查启用的推送服务器是否有对应的配置
         for server in self.push_servers:
             server_config = getattr(self, server, None)
-            if server_config and hasattr(server_config, "is_configured"):
+            if server_config and callable(
+                getattr(server_config, "is_configured", None)
+            ):
                 if not server_config.is_configured():
                     raise ValueError(f"{server} 配置不完整")
         return self
@@ -271,24 +293,12 @@ class PushConfig(BaseModel):
             return False
 
         server_config = getattr(self, server_name, None)
-        if not server_config:
+        if not server_config or not callable(
+            getattr(server_config, "is_configured", None)
+        ):
             return False
 
-        # 检查必要配置字段
-        if server_name == "telegram":
-            return bool(server_config.bot_token and server_config.chat_id)
-        elif server_name == "dingrobot":
-            return bool(server_config.webhook)
-        elif server_name == "feishubot":
-            return bool(server_config.webhook)
-        elif server_name == "bark":
-            return bool(server_config.api_url and server_config.token)
-        elif server_name == "gotify":
-            return bool(server_config.api_url and server_config.token)
-        elif server_name == "webhook":
-            return bool(server_config.webhook_url)
-
-        return False
+        return server_config.is_configured()
 
     model_config = ConfigDict(
         extra="ignore",
@@ -296,41 +306,6 @@ class PushConfig(BaseModel):
         arbitrary_types_allowed=True,
         str_strip_whitespace=True,
     )
-
-
-# 为各配置类添加配置检查方法
-def add_config_check_methods():
-    """为各配置类添加配置检查方法"""
-
-    def is_configured_telegram(self) -> bool:
-        return bool(self.bot_token and self.chat_id)
-
-    def is_configured_dingrobot(self) -> bool:
-        return bool(self.webhook)
-
-    def is_configured_feishubot(self) -> bool:
-        return bool(self.webhook)
-
-    def is_configured_bark(self) -> bool:
-        return bool(self.api_url and self.token)
-
-    def is_configured_gotify(self) -> bool:
-        return bool(self.api_url and self.token)
-
-    def is_configured_webhook(self) -> bool:
-        return bool(self.webhook_url)
-
-    # 为各配置类添加方法
-    TelegramConfig.is_configured = is_configured_telegram
-    DingRobotConfig.is_configured = is_configured_dingrobot
-    FeishuBotConfig.is_configured = is_configured_feishubot
-    BarkConfig.is_configured = is_configured_bark
-    GotifyConfig.is_configured = is_configured_gotify
-    WebhookConfig.is_configured = is_configured_webhook
-
-
-# 初始化配置检查方法
-add_config_check_methods()
 
 
 # 使用示例

@@ -452,7 +452,7 @@ class PluginDataManager:
         else:
             cls.plugin_data = PluginData()
             try:
-                str_data = cls.plugin_data.json(indent=4)
+                str_data = json.dumps(cls.plugin_data.model_dump(), indent=4, ensure_ascii=False)
                 project_data_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(project_data_path, "w", encoding="utf-8") as f:
                     f.write(str_data)
@@ -474,7 +474,7 @@ class PluginDataManager:
         :return: 是否成功
         """
         try:
-            str_data = cls.plugin_data.json(indent=4)
+            str_data = json.dumps(cls.plugin_data.model_dump(), indent=4, ensure_ascii=False)
         except (AttributeError, TypeError, ValueError):
             logger.exception("数据对象序列化失败，可能是数据类型错误")
             return False
