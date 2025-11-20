@@ -15,6 +15,7 @@ if project_config is None:
 
 logger.info(
     f"✅ 配置加载成功 - 版本: {project_config.version}, 用户数: {len(project_config.users)}"
+    f"\n   推送配置: enable: {project_config.push_config.enable}, servers: {project_config.push_config.push_servers}"
 )
 
 project_env = ProjectEnv()

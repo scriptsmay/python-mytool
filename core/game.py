@@ -116,7 +116,7 @@ async def manually_starrail_note_check():
     result_msg = ""
     if msgs_list:
         # 每个消息单独一行，更清晰
-        result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
+        result_msg = "\n----------------\n".join([f"|- {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
         logger.info("🎉执行完成，无记录消息")
@@ -403,7 +403,9 @@ async def genshin_note_check(user: UserData, msgs_list=list[str]):
     for account in user.accounts.values():
         note_notice_status.setdefault(account.bbs_uid, NoteNoticeStatus())
         genshin_notice = note_notice_status[account.bbs_uid].genshin
-        if account.enable_resin and "GenshinImpact" in account.game_sign_games:
+
+        # 原神有签到配置
+        if "GenshinImpact" in account.game_sign_games:
             genshin_board_status, note = await genshin_note(account)
             if not genshin_board_status:
                 if genshin_board_status.login_expired:
@@ -422,8 +424,7 @@ async def genshin_note_check(user: UserData, msgs_list=list[str]):
                 continue
 
             msg = ""
-            # 手动查询体力时，无需判断是否溢出
-            do_notice = False
+
             """记录是否需要提醒"""
             # 体力溢出提醒
             if note.current_resin >= account.user_resin_threshold:
@@ -432,12 +433,10 @@ async def genshin_note_check(user: UserData, msgs_list=list[str]):
                     if note.current_resin == 200:
                         genshin_notice.current_resin_full = True
                         msg += "❕您的树脂已经满啦\n"
-                        do_notice = True
                     elif not genshin_notice.current_resin:
                         genshin_notice.current_resin_full = False
                         genshin_notice.current_resin = True
                         msg += "❕您的树脂已达到提醒阈值\n"
-                        do_notice = True
             else:
                 genshin_notice.current_resin = False
                 genshin_notice.current_resin_full = False
@@ -452,25 +451,6 @@ async def genshin_note_check(user: UserData, msgs_list=list[str]):
             else:
                 genshin_notice.current_home_coin = False
 
-            # 参量质变仪就绪提醒
-            if note.transformer:
-                if note.transformer_text == "已准备就绪":
-                    # 防止重复提醒
-                    if not genshin_notice.transformer:
-                        genshin_notice.transformer = True
-                        msg += "❕您的参量质变仪已准备就绪\n\n"
-                        do_notice = True
-                else:
-                    genshin_notice.transformer = False
-            else:
-                genshin_notice.transformer = True
-
-            if not do_notice:
-                logger.info(
-                    f"原神实时便笺：账户 {account.display_name} 树脂:{note.current_resin},未满足推送条件"
-                )
-                return
-
             msg += (
                 "❖原神·实时便笺❖"
                 f"\n🆔账户 {account.display_name}"
@@ -479,15 +459,11 @@ async def genshin_note_check(user: UserData, msgs_list=list[str]):
                 f"\n🕰️探索派遣：{note.current_expedition_num} / {note.max_expedition_num}"
                 f"\n📅每日委托：{4 - note.finished_task_num} 个任务未完成"
                 f"\n💰洞天财瓮：{note.current_home_coin} / {note.max_home_coin}"
-                f"\n🎰参量质变仪：{note.transformer_text if note.transformer else 'N/A'}"
             )
 
             # TODO 测试日志和推送
             msgs_list.append(msg)
             logger.info(msg)
-            # push(push_message=msg)
-
-            return msgs_list
 
 
 async def starrail_note_check(user: UserData, msgs_list: list[str]):
@@ -501,7 +477,8 @@ async def starrail_note_check(user: UserData, msgs_list: list[str]):
     for account in user.accounts.values():
         note_notice_status.setdefault(account.bbs_uid, NoteNoticeStatus())
         starrail_notice = note_notice_status[account.bbs_uid].starrail
-        if account.enable_resin and "StarRail" in account.game_sign_games:
+        # 星铁有签到配置
+        if "StarRail" in account.game_sign_games:
             starrail_board_status, note = await starrail_note(account)
             if not starrail_board_status:
                 if starrail_board_status.login_expired:
@@ -520,9 +497,7 @@ async def starrail_note_check(user: UserData, msgs_list: list[str]):
                 continue
 
             msg = ""
-            # 手动查询体力时，无需判断是否溢出
-            do_notice = False
-            """记录是否需要提醒"""
+
             # 体力溢出提醒
             if note.current_stamina >= account.user_stamina_threshold:
                 # 防止重复提醒
@@ -532,14 +507,12 @@ async def starrail_note_check(user: UserData, msgs_list: list[str]):
                         msg += "❕您的开拓力已经溢出\n"
                         if note.current_train_score != note.max_train_score:
                             msg += "❕您的每日实训未完成\n"
-                        do_notice = True
                     elif not starrail_notice.current_stamina:
                         starrail_notice.current_stamina_full = False
                         starrail_notice.current_stamina = True
                         msg += "❕您的开拓力已达到提醒阈值\n"
                         if note.current_train_score != note.max_train_score:
                             msg += "❕您的每日实训未完成\n"
-                        do_notice = True
             else:
                 starrail_notice.current_stamina = False
                 starrail_notice.current_stamina_full = False
@@ -548,13 +521,6 @@ async def starrail_note_check(user: UserData, msgs_list: list[str]):
             if note.current_rogue_score != note.max_rogue_score:
                 if project_config.preference.notice_time:
                     msg += "❕您的模拟宇宙积分还没打满\n\n"
-                    do_notice = True
-
-            if not do_notice:
-                logger.info(
-                    f"崩铁实时便笺：账户 {account.display_name} 开拓力:{note.current_stamina},未满足推送条件"
-                )
-                return
 
             msg += (
                 "❖星穹铁道·实时便笺❖"
@@ -569,6 +535,3 @@ async def starrail_note_check(user: UserData, msgs_list: list[str]):
             # TODO 测试日志和推送
             logger.info(msg)
             msgs_list.append(msg)
-            # push(push_message=msg)
-
-            return msgs_list

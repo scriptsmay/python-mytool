@@ -8,38 +8,45 @@ from dataclasses import dataclass, field
 from config.logger import logger
 from configparser import ConfigParser
 
-
-@dataclass
-class PushConfig:
-    """推送配置类"""
-
-    # 使用 field 提供默认值，简化 __post_init__
-    enable: bool = True
-    error_push_only: bool = False
-    push_servers: List[str] = field(default_factory=list)
-    push_block_keys: List[str] = field(default_factory=list)
-
-    # 各推送服务的配置
-    telegram: Dict[str, Any] = field(default_factory=dict)
-    dingrobot: Dict[str, Any] = field(default_factory=dict)
-    feishubot: Dict[str, Any] = field(default_factory=dict)
-    bark: Dict[str, Any] = field(default_factory=dict)
-    gotify: Dict[str, Any] = field(default_factory=dict)
-    webhook: Dict[str, Any] = field(default_factory=dict)
+# 导入新的配置模型
+try:
+    from models.data_models import PushConfig as NewPushConfig
+    from models.data_models import (
+        TelegramConfig,
+        DingRobotConfig,
+        FeishuBotConfig,
+        BarkConfig,
+        GotifyConfig,
+        WebhookConfig,
+    )
+except ImportError:
+    # 回退到旧的 dataclass
+    @dataclass
+    class NewPushConfig:
+        enable: bool = True
+        error_push_only: bool = False
+        push_servers: List[str] = field(default_factory=list)
+        push_block_keys: List[str] = field(default_factory=list)
+        telegram: Any = field(default_factory=dict)
+        dingrobot: Any = field(default_factory=dict)
+        feishubot: Any = field(default_factory=dict)
+        bark: Any = field(default_factory=dict)
+        gotify: Any = field(default_factory=dict)
+        webhook: Any = field(default_factory=dict)
 
 
 # 推送标题映射
 PUSH_TITLES = {
-    -99: "「脚本」依赖缺失",
-    -2: "「脚本」StatusID 错误",
-    -1: "「脚本」Config版本已更新",
-    0: "「脚本」执行成功!",
-    1: "「脚本」执行失败!",
-    2: "「脚本」部分账号执行失败！",
-    3: "「脚本」社区/游戏道具签到触发验证码！",
+    -99: "「米忽悠签到」依赖缺失",
+    -2: "「米忽悠签到」StatusID 错误",
+    -1: "「米忽悠签到」Config版本已更新",
+    0: "「米忽悠签到」执行成功",
+    1: "「米忽悠签到」执行失败",
+    2: "「米忽悠签到」部分账号执行失败",
+    3: "「米忽悠签到」社区/游戏道具签到触发验证码！",
 }
 
-# 支持的推送方式（可简化为列表或集合）
+# 支持的推送方式
 SUPPORTED_PUSH_METHODS = {
     "telegram",
     "dingrobot",
@@ -58,7 +65,7 @@ def get_new_session(**kwargs) -> Any:
 
         return httpx.Client(
             timeout=30,
-            transport=httpx.HTTPTransport(retries=10),
+            transport=httpx.HTTPTransport(retries=3),
             follow_redirects=True,
             **kwargs,
         )
@@ -67,9 +74,8 @@ def get_new_session(**kwargs) -> Any:
         from requests.adapters import HTTPAdapter
 
         session = requests.Session()
-        session.mount("http://", HTTPAdapter(max_retries=10))
-        session.mount("https://", HTTPAdapter(max_retries=10))
-
+        session.mount("http://", HTTPAdapter(max_retries=3))
+        session.mount("https://", HTTPAdapter(max_retries=3))
         if "proxies" in kwargs:
             session.proxies.update(kwargs["proxies"])
         return session
@@ -90,7 +96,6 @@ def get_new_session_use_proxy(http_proxy: str):
         "http://": f"http://{http_proxy}",
         "https://": f"http://{http_proxy}",
     }
-
     if is_module_available("httpx"):
         return get_new_session(proxies=proxies_dict)
     else:
@@ -109,32 +114,29 @@ class PushHandler:
 
     def __init__(
         self,
-        config: Optional[PushConfig] = None,
+        config: Optional[NewPushConfig] = None,
         config_file: Optional[str] = None,
         http_client: Optional[Any] = None,
     ):
         """
         初始化推送处理器
-
-        Args:
-            config: 推送配置对象
-            config_file: 配置文件路径
-            http_client: 可选的 HTTP 客户端实例
         """
         self.http = http_client or get_new_session()
         self.config = config or self._load_config_from_file(config_file)
 
-    def _load_config_from_file(self, config_file: Optional[str] = None) -> PushConfig:
+    def _load_config_from_file(
+        self, config_file: Optional[str] = None
+    ) -> NewPushConfig:
         """从配置文件加载配置"""
         cfg = ConfigParser()
         cfg.read(config_file or "config.ini", encoding="utf-8")
 
-        # 简化的配置加载逻辑
         def get_list(section, key, fallback=""):
             value = cfg.get(section, key, fallback=fallback)
             return [item.strip() for item in value.split(",") if item.strip()]
 
-        push_config = PushConfig(
+        # 创建新的配置对象
+        push_config = NewPushConfig(
             enable=cfg.getboolean("setting", "enable", fallback=True),
             error_push_only=cfg.getboolean(
                 "setting", "error_push_only", fallback=False
@@ -143,7 +145,7 @@ class PushHandler:
             push_block_keys=get_list("setting", "push_block_keys"),
         )
 
-        # 使用辅助方法加载各服务配置
+        # 加载各服务配置
         service_configs = {
             "telegram": ["api_url", "bot_token", "chat_id", "http_proxy"],
             "dingrobot": ["webhook", "secret"],
@@ -169,7 +171,6 @@ class PushHandler:
         """消息内容关键词替换"""
         if not self.config.push_block_keys:
             return msg
-
         result = str(msg)
         for block_key in self.config.push_block_keys:
             if block_key:
@@ -182,60 +183,92 @@ class PushHandler:
         """准备消息内容"""
         title = get_push_title(status_id)
         message = f"{title}\n\n{push_message}"
-
         if img_file:
             base64_data = base64.b64encode(img_file).decode("utf-8")
             message = f"{message}\n\n![图片](data:image/png;base64,{base64_data})"
-
         return message
 
     def _safe_log_error(self, service_name: str, exception: Exception):
         """安全地记录错误日志"""
         error_msg = str(exception)
-        # 简化的敏感信息过滤
         for sensitive in ["token=", "secret=", "key=", "password="]:
             if sensitive in error_msg:
                 error_msg = error_msg.split(sensitive)[0] + f"{sensitive}***"
         logger.error(f"{service_name} 推送失败: {error_msg}")
 
-    def _check_required_config(
-        self, config: Dict[str, Any], required_keys: List[str]
-    ) -> bool:
-        """检查必需配置项"""
-        return all(config.get(key, "").strip() for key in required_keys)
+    def _get_config_value(self, config_obj, key, default=None):
+        """安全获取配置值，兼容字典和对象"""
+        if hasattr(config_obj, key):
+            return getattr(config_obj, key)
+        elif isinstance(config_obj, dict):
+            return config_obj.get(key, default)
+        return default
+
+    def _is_config_configured(self, config_obj, required_keys: List[str]) -> bool:
+        """检查配置是否完整"""
+        for key in required_keys:
+            value = self._get_config_value(config_obj, key, "")
+            if not str(value).strip():
+                return False
+        return True
 
     def _send_request(self, method: str, url: str, **kwargs) -> bool:
         """统一的请求发送方法"""
         try:
             session = self.http
             if method.upper() == "GET":
-                response = session.get(url, **kwargs)
-            else:  # POST
-                response = session.post(url, **kwargs)
-
+                response = session.get(url, timeout=30, **kwargs)
+            else:
+                response = session.post(url, timeout=30, **kwargs)
             response.raise_for_status()
             return True
         except Exception as e:
             self._safe_log_error("HTTP请求", e)
             return False
 
+    def check_telegram_connectivity(self) -> bool:
+        """检查 Telegram API 连通性"""
+        config = self.config.telegram
+        if not self._is_config_configured(config, ["api_url", "bot_token"]):
+            return False
+
+        api_url = self._get_config_value(config, "api_url")
+        bot_token = self._get_config_value(config, "bot_token")
+
+        try:
+            # 简单的连通性测试
+            test_url = f"https://{api_url}/bot{bot_token}/getMe"
+            logger.debug(f"Telegram API 连通性测试: {test_url}")
+            response = self.http.get(test_url, timeout=10)
+            return response.status_code == 200
+        except Exception as e:
+            logger.warning(f"Telegram API 连通性检查失败: {e}")
+            return False
+
     def telegram(
         self, status_id: int, push_message: str, img_file: Optional[bytes] = None
     ) -> bool:
         """Telegram 推送"""
+        if not self.check_telegram_connectivity():
+            logger.warning("Telegram 配置不完整或无法连接")
+            return False
         config = self.config.telegram
-        if not self._check_required_config(config, ["api_url", "bot_token", "chat_id"]):
+        if not self._is_config_configured(config, ["api_url", "bot_token", "chat_id"]):
             logger.warning("Telegram 配置不完整")
             return False
 
         message = self._prepare_message(status_id, push_message, img_file)
-        http_proxy = config.get("http_proxy")
+        http_proxy = self._get_config_value(config, "http_proxy")
         session = get_new_session_use_proxy(http_proxy) if http_proxy else self.http
+
+        api_url = self._get_config_value(config, "api_url")
+        bot_token = self._get_config_value(config, "bot_token")
+        chat_id = self._get_config_value(config, "chat_id")
 
         return self._send_request(
             "POST",
-            url=f"https://{config['api_url']}/bot{config['bot_token']}/sendMessage",
-            data={"chat_id": config["chat_id"], "text": message},
+            url=f"https://{api_url}/bot{bot_token}/sendMessage",
+            data={"chat_id": chat_id, "text": message},
         )
 
     def dingrobot(
@@ -243,12 +276,12 @@ class PushHandler:
     ) -> bool:
         """钉钉群机器人推送"""
         config = self.config.dingrobot
-        if not self._check_required_config(config, ["webhook"]):
+        if not self._is_config_configured(config, ["webhook"]):
             logger.warning("钉钉机器人配置不完整")
             return False
 
-        api_url = config["webhook"]
-        secret = config.get("secret")
+        api_url = self._get_config_value(config, "webhook")
+        secret = self._get_config_value(config, "secret")
 
         # 签名计算
         if secret:
@@ -276,15 +309,16 @@ class PushHandler:
     ) -> bool:
         """飞书机器人推送"""
         config = self.config.feishubot
-        if not self._check_required_config(config, ["webhook"]):
+        if not self._is_config_configured(config, ["webhook"]):
             logger.warning("飞书机器人配置不完整")
             return False
 
         message = self._prepare_message(status_id, push_message, img_file)
+        webhook_url = self._get_config_value(config, "webhook")
 
         return self._send_request(
             "POST",
-            url=config["webhook"],
+            url=webhook_url,
             headers={"Content-Type": "application/json; charset=utf-8"},
             json={"msg_type": "text", "content": {"text": message}},
         )
@@ -294,20 +328,23 @@ class PushHandler:
     ) -> bool:
         """Bark 推送"""
         config = self.config.bark
-        if not self._check_required_config(config, ["api_url", "token"]):
+        if not self._is_config_configured(config, ["api_url", "token"]):
             logger.warning("Bark 配置不完整")
             return False
 
         send_title = urllib.parse.quote_plus(get_push_title(status_id))
         encoded_message = urllib.parse.quote_plus(push_message)
-        icon = config.get("icon", "default")
+        icon = self._get_config_value(config, "icon", "default")
         icon_param = (
             f"&icon=https://cdn.jsdelivr.net/gh/tanmx/pic@main/mihoyo/{icon}.png"
         )
 
+        api_url = self._get_config_value(config, "api_url")
+        token = self._get_config_value(config, "token")
+
         return self._send_request(
             "GET",
-            url=f'{config["api_url"]}/{config["token"]}/{send_title}/{encoded_message}?{icon_param}',
+            url=f"{api_url}/{token}/{send_title}/{encoded_message}?{icon_param}",
         )
 
     def gotify(
@@ -315,20 +352,23 @@ class PushHandler:
     ) -> bool:
         """Gotify 推送"""
         config = self.config.gotify
-        if not self._check_required_config(config, ["api_url", "token"]):
+        if not self._is_config_configured(config, ["api_url", "token"]):
             logger.warning("Gotify 配置不完整")
             return False
 
         message = self._prepare_message(status_id, push_message, img_file)
+        api_url = self._get_config_value(config, "api_url")
+        token = self._get_config_value(config, "token")
+        priority = self._get_config_value(config, "priority", 5)
 
         return self._send_request(
             "POST",
-            url=f'{config["api_url"]}/message?token={config["token"]}',
+            url=f"{api_url}/message?token={token}",
             headers={"Content-Type": "application/json; charset=utf-8"},
             json={
                 "title": get_push_title(status_id),
                 "message": message,
-                "priority": config.get("priority", 5),
+                "priority": priority,
             },
         )
 
@@ -337,15 +377,16 @@ class PushHandler:
     ) -> bool:
         """WebHook 推送"""
         config = self.config.webhook
-        if not self._check_required_config(config, ["webhook_url"]):
+        if not self._is_config_configured(config, ["webhook_url"]):
             logger.warning("WebHook 配置不完整")
             return False
 
         message = self._prepare_message(status_id, push_message, img_file)
+        webhook_url = self._get_config_value(config, "webhook_url")
 
         return self._send_request(
             "POST",
-            url=config["webhook_url"],
+            url=webhook_url,
             headers={"Content-Type": "application/json; charset=utf-8"},
             json={"title": get_push_title(status_id), "message": message},
         )
@@ -386,14 +427,14 @@ class PushHandler:
                 self._safe_log_error(push_server, e)
                 results.append(False)
 
-        return all(results)
+        return all(results) if results else True
 
 
 # 全局配置和函数
-_global_push_config: Optional[PushConfig] = None
+_global_push_config: Optional[NewPushConfig] = None
 
 
-def init_config(config: PushConfig) -> None:
+def init_config(config: NewPushConfig) -> None:
     """初始化全局推送配置"""
     global _global_push_config
     _global_push_config = config
@@ -403,11 +444,10 @@ def push(
     status: int = 0,
     push_message: str = "",
     img_file: Optional[bytes] = None,
-    config: Optional[PushConfig] = None,
+    config: Optional[NewPushConfig] = None,
     config_file: Optional[str] = None,
 ) -> bool:
     """推送消息到指定平台"""
-    # 配置优先级: 参数config > 全局配置 > 配置文件 > 默认配置
     if config:
         push_handler = PushHandler(config=config)
     elif _global_push_config:
@@ -418,15 +458,3 @@ def push(
         push_handler = PushHandler()
 
     return push_handler.push(status, push_message, img_file)
-
-
-# 使用示例
-if __name__ == "__main__":
-    # 测试推送
-    test_config = PushConfig(
-        enable=True,
-        push_servers=["bark"],  # 使用不需要真实配置的服务测试
-        bark={"api_url": "http://example.com", "token": "test"},
-    )
-
-    push(0, f"测试推送 {int(time.time())}", config=test_config)

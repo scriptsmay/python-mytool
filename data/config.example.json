@@ -69,7 +69,7 @@
     "error_push_only": false,
     "push_servers": ["telegram", "gotify"],
     "telegram": {
-      "api_url": "",
+      "api_url": "api.telegram.org",
       "bot_token": "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
       "chat_id": "1234567890",
       "http_proxy": ""

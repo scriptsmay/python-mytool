@@ -20,14 +20,14 @@ except Exception as e:
     print(f"❌初始化推送配置失败：{e}")
     exit(1)
 
-# # 调试信息
-# print("🔍 调试推送配置信息:")
-# if hasattr(project_config.push_config, "model_dump"):
-#     print(
-#         f"配置详细信息: {json.dumps(project_config.push_config.model_dump(), indent=4, ensure_ascii=False)}"
-#     )
 
-# exit(0)
+def debug_info():
+    # 调试信息
+    print("🔍 调试推送配置信息:")
+    if hasattr(project_config.push_config, "model_dump"):
+        print(
+            f"配置详细信息: {json.dumps(project_config.push_config.model_dump(), indent=4, ensure_ascii=False)}"
+        )
 
 
 async def main_task():
