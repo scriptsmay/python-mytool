@@ -406,7 +406,7 @@ class PushHandler:
             logger.info("仅错误时推送，当前状态为成功，跳过推送")
             return True
 
-        logger.info("正在执行推送...")
+        # logger.info("正在执行推送...")
         processed_message = self._msg_replace(push_message)
 
         # 执行推送

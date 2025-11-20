@@ -195,9 +195,9 @@ async def perform_game_sign(user: UserData, msgs_list=list[str]):
                     else:
                         message = f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败，请稍后再试"
                     msgs_list.append(message)
-                    if user.enable_notice:
-                        # TODO: test 发送通知
-                        push(push_message=message)
+                    # if user.enable_notice:
+                    #     # TODO: test 发送通知
+                    #     push(push_message=message)
 
                     await asyncio.sleep(project_config.preference.sleep_time)
                     continue

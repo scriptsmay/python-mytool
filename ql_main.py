@@ -2,7 +2,6 @@
 new Env('米忽悠家签到');
 """
 
-import notify
 import os
 import asyncio
 from utils import push, init_config, logger
@@ -19,8 +18,13 @@ def ql_push(status_code, title, message):
             logger.error(f"❌初始化推送配置失败：{e}")
             print(f"❌初始化推送配置失败：{e}")
         push.push(status_code, message)
-    else:
-        notify.send(title, message)
+    elif QLAPI:
+        logger.info("🚀 使用 QLAPI 推送...")
+        try:
+            QLAPI.notify(title, message)
+            logger.info("✅ QLAPI 通知发送成功")
+        except Exception as e:
+            logger.error(f"❌ QLAPI 通知失败：{e}")
 
 
 try:
