@@ -15,30 +15,15 @@ from urllib.parse import urlencode
 import httpx
 import tenacity
 
-# 设置logger
-try:
-    import logging
-
-    logger = logging.getLogger(__name__)
-except ImportError:
-    # 简单的logger回退
-    class SimpleLogger:
-        def info(self, msg):
-            print(f"INFO: {msg}")
-
-        def exception(self, msg):
-            print(f"ERROR: {msg}")
-
-    logger = SimpleLogger()
-
+from config.logger import logger
 from qrcode import QRCode
 
 from models import (
     GeetestResult,
-    PluginDataManager,
+    ConfigDataManager,
     Preference,
-    plugin_config,
-    plugin_env,
+    project_config,
+    project_env,
     UserData,
 )
 
@@ -69,7 +54,9 @@ def custom_attempt_times(retry: bool):
     :param retry True - 重试次数达到配置中 MAX_RETRY_TIMES 时停止; False - 执行次数达到1时停止，即不进行重试
     """
     if retry:
-        return tenacity.stop_after_attempt(plugin_config.preference.max_retry_times + 1)
+        return tenacity.stop_after_attempt(
+            project_config.preference.max_retry_times + 1
+        )
     else:
         return tenacity.stop_after_attempt(1)
 
@@ -83,7 +70,7 @@ def get_async_retry(retry: bool):
     return tenacity.AsyncRetrying(
         stop=custom_attempt_times(retry),
         retry=tenacity.retry_if_exception_type(BaseException),
-        wait=tenacity.wait_fixed(plugin_config.preference.retry_interval),
+        wait=tenacity.wait_fixed(project_config.preference.retry_interval),
     )
 
 
@@ -141,24 +128,24 @@ def generate_ds(
         data is None
         and params is None
         or salt is not None
-        and salt != plugin_env.salt_config.SALT_PROD
+        and salt != project_env.salt_config.SALT_PROD
     ):
         if platform == "ios":
-            salt = salt or plugin_env.salt_config.SALT_IOS
+            salt = salt or project_env.salt_config.SALT_IOS
         else:
-            salt = salt or plugin_env.salt_config.SALT_ANDROID
+            salt = salt or project_env.salt_config.SALT_ANDROID
         t = str(int(time.time()))
         a = "".join(random.sample(string.ascii_lowercase + string.digits, 6))
         re = hashlib.md5(f"salt={salt}&t={t}&r={a}".encode()).hexdigest()
         return f"{t},{a},{re}"
     else:
         if params:
-            salt = plugin_env.salt_config.SALT_PARAMS if not salt else salt
+            salt = project_env.salt_config.SALT_PARAMS if not salt else salt
         else:
-            salt = plugin_env.salt_config.SALT_DATA if not salt else salt
+            salt = project_env.salt_config.SALT_DATA if not salt else salt
 
         if not data:
-            if salt == plugin_env.salt_config.SALT_PROD:
+            if salt == project_env.salt_config.SALT_PROD:
                 data = {}
             else:
                 data = ""
@@ -187,20 +174,20 @@ async def get_validate(user: UserData, gt: str = None, challenge: str = None):
     :param challenge: challenge
     :return: 如果配置了平台URL，且 gt, challenge 不为空，返回 GeetestResult
     """
-    if not plugin_config.preference.global_geetest:
+    if not project_config.preference.global_geetest:
         if not (gt and challenge) or not user.geetest_url:
             return GeetestResult("", "")
         geetest_url = user.geetest_url
         params = {"gt": gt, "challenge": challenge}
         params.update(user.geetest_params or {})
     else:
-        if not (gt and challenge) or not plugin_config.preference.geetest_url:
+        if not (gt and challenge) or not project_config.preference.geetest_url:
             return GeetestResult("", "")
-        geetest_url = plugin_config.preference.geetest_url
+        geetest_url = project_config.preference.geetest_url
         params = {"gt": gt, "challenge": challenge}
-        params.update(plugin_config.preference.geetest_params or {})
+        params.update(project_config.preference.geetest_params or {})
     content = deepcopy(
-        plugin_config.preference.geetest_json or Preference().geetest_json
+        project_config.preference.geetest_json or Preference().geetest_json
     )
     for key, value in content.items():
         if isinstance(value, str):
@@ -255,7 +242,7 @@ async def get_file(url: str, retry: bool = True):
                 async with httpx.AsyncClient() as client:
                     res = await client.get(
                         url,
-                        timeout=plugin_config.preference.timeout,
+                        timeout=project_config.preference.timeout,
                         follow_redirects=True,
                     )
                 return res.content
@@ -300,4 +287,4 @@ def get_unique_users() -> Iterable[Tuple[str, UserData]]:
 
     :return: dict_items[用户ID, 用户数据]
     """
-    return PluginDataManager.plugin_data.users.items()
+    return ConfigDataManager.get_users().items()

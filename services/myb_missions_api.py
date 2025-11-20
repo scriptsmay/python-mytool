@@ -16,11 +16,12 @@ from models import (
     MissionData,
     MissionState,
     UserAccount,
-    plugin_config,
-    plugin_env,
+    project_config,
+    project_env,
     UserData,
 )
-from utils import logger, generate_ds, get_async_retry, get_validate
+from config import logger
+from utils import generate_ds, get_async_retry, get_validate
 
 URL_SIGN = "https://bbs-api.mihoyo.com/apihub/app/api/signIn"
 URL_GET_POST = (
@@ -39,14 +40,14 @@ URL_MISSION_STATE = (
 HEADERS_BASE = {
     "Host": "bbs-api.miyoushe.com",
     "Referer": "https://app.mihoyo.com",
-    "User-Agent": plugin_env.device_config.USER_AGENT_ANDROID_OTHER,
-    "x-rpc-app_version": plugin_env.device_config.X_RPC_APP_VERSION,
-    "x-rpc-channel": plugin_env.device_config.X_RPC_CHANNEL_ANDROID,
+    "User-Agent": project_env.device_config.USER_AGENT_ANDROID_OTHER,
+    "x-rpc-app_version": project_env.device_config.X_RPC_APP_VERSION,
+    "x-rpc-channel": project_env.device_config.X_RPC_CHANNEL_ANDROID,
     "x-rpc-client_type": "2",
     "x-rpc-device_id": None,
-    "x-rpc-device_model": plugin_env.device_config.X_RPC_DEVICE_MODEL_ANDROID,
-    "x-rpc-device_name": plugin_env.device_config.X_RPC_DEVICE_NAME_ANDROID,
-    "x-rpc-sys_version": plugin_env.device_config.X_RPC_SYS_VERSION_ANDROID,
+    "x-rpc-device_model": project_env.device_config.X_RPC_DEVICE_MODEL_ANDROID,
+    "x-rpc-device_name": project_env.device_config.X_RPC_DEVICE_NAME_ANDROID,
+    "x-rpc-sys_version": project_env.device_config.X_RPC_SYS_VERSION_ANDROID,
     "Accept-Encoding": "gzip",
     "Connection": "Keep-Alive",
     "DS": None,
@@ -56,7 +57,7 @@ HEADERS_MISSION = {
     "Origin": "https://webstatic.mihoyo.com",
     "Connection": "keep-alive",
     "Accept": "application/json, text/plain, */*",
-    "User-Agent": plugin_env.device_config.USER_AGENT_MOBILE,
+    "User-Agent": project_env.device_config.USER_AGENT_MOBILE,
     "Accept-Language": "zh-CN,zh-Hans;q=0.9",
     "Referer": "https://webstatic.mihoyo.com/",
     "Accept-Encoding": "gzip, deflate, br",
@@ -66,28 +67,28 @@ HEADERS_GET_POSTS = {
     "Accept": "*/*",
     "x-rpc-client_type": "1",
     "x-rpc-device_id": None,
-    "x-rpc-channel": plugin_env.device_config.X_RPC_CHANNEL,
+    "x-rpc-channel": project_env.device_config.X_RPC_CHANNEL,
     "Accept-Language": "zh-CN,zh-Hans;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
-    "x-rpc-sys_version": plugin_env.device_config.X_RPC_SYS_VERSION,
+    "x-rpc-sys_version": project_env.device_config.X_RPC_SYS_VERSION,
     "Referer": "https://app.mihoyo.com",
-    "x-rpc-device_name": plugin_env.device_config.X_RPC_DEVICE_NAME_MOBILE,
-    "x-rpc-app_version": plugin_env.device_config.X_RPC_APP_VERSION,
-    "User-Agent": plugin_env.device_config.USER_AGENT_OTHER,
+    "x-rpc-device_name": project_env.device_config.X_RPC_DEVICE_NAME_MOBILE,
+    "x-rpc-app_version": project_env.device_config.X_RPC_APP_VERSION,
+    "User-Agent": project_env.device_config.USER_AGENT_OTHER,
     "Connection": "keep-alive",
 }
 
 # 旧的API
 HEADERS_OLD = {
     "Referer": "https://app.mihoyo.com",
-    "User-Agent": plugin_env.device_config.USER_AGENT_ANDROID_OTHER,
-    "x-rpc-app_version": plugin_env.device_config.X_RPC_APP_VERSION,
-    "x-rpc-channel": plugin_env.device_config.X_RPC_CHANNEL_ANDROID,
+    "User-Agent": project_env.device_config.USER_AGENT_ANDROID_OTHER,
+    "x-rpc-app_version": project_env.device_config.X_RPC_APP_VERSION,
+    "x-rpc-channel": project_env.device_config.X_RPC_CHANNEL_ANDROID,
     "x-rpc-client_type": "2",
     "x-rpc-device_id": None,
-    "x-rpc-device_model": plugin_env.device_config.X_RPC_DEVICE_MODEL_ANDROID,
-    "x-rpc-device_name": plugin_env.device_config.X_RPC_DEVICE_NAME_ANDROID,
-    "x-rpc-sys_version": plugin_env.device_config.X_RPC_SYS_VERSION_ANDROID,
+    "x-rpc-device_model": project_env.device_config.X_RPC_DEVICE_MODEL_ANDROID,
+    "x-rpc-device_name": project_env.device_config.X_RPC_DEVICE_NAME_ANDROID,
+    "x-rpc-sys_version": project_env.device_config.X_RPC_SYS_VERSION_ANDROID,
     "Accept-Encoding": "gzip",
     "Connection": "Keep-Alive",
     "DS": None,
@@ -152,7 +153,7 @@ class BaseMission:
                             URL_SIGN,
                             headers=headers,
                             json=content,
-                            timeout=plugin_config.preference.timeout,
+                            timeout=project_config.preference.timeout,
                             cookies=self.account.cookies.dict(
                                 v2_stoken=True, cookie_type=True
                             ),
@@ -175,7 +176,7 @@ class BaseMission:
                             f"米游币任务 - 讨论区签到: 用户 {self.account.display_name} 需要完成人机验证"
                         )
                         logger.debug(f"网络请求返回: {res.text}")
-                        if plugin_config.preference.geetest_url or user.geetest_url:
+                        if project_config.preference.geetest_url or user.geetest_url:
                             create_status, mmt_data = await create_verification(
                                 self.account
                             )
@@ -238,7 +239,7 @@ class BaseMission:
                         res = await client.get(
                             URL_GET_POST.format(self.gids),
                             headers=headers,
-                            timeout=plugin_config.preference.timeout,
+                            timeout=project_config.preference.timeout,
                         )
                     api_result = ApiResultHandler.from_response(res.json())
                     for post in api_result.data["list"]:
@@ -278,7 +279,7 @@ class BaseMission:
                                 res = await client.get(
                                     URL_READ.format(post_id),
                                     headers=self.headers,
-                                    timeout=plugin_config.preference.timeout,
+                                    timeout=project_config.preference.timeout,
                                     cookies=self.account.cookies.dict(
                                         v2_stoken=True, cookie_type=True
                                     ),
@@ -311,7 +312,7 @@ class BaseMission:
                         logger.exception(f"米游币任务 - 阅读: 请求失败")
                         return MissionStatus(network_error=True)
                 if count != read_times:
-                    await asyncio.sleep(plugin_config.preference.sleep_time)
+                    await asyncio.sleep(project_config.preference.sleep_time)
             get_post_status, posts = await self.get_posts(retry)
             if not get_post_status:
                 return MissionStatus(failed_getting_post=True)
@@ -344,7 +345,7 @@ class BaseMission:
                                     URL_LIKE,
                                     headers=headers,
                                     json={"is_cancel": False, "post_id": post_id},
-                                    timeout=plugin_config.preference.timeout,
+                                    timeout=project_config.preference.timeout,
                                     cookies=self.account.cookies.dict(
                                         v2_stoken=True, cookie_type=True
                                     ),
@@ -376,7 +377,7 @@ class BaseMission:
                         logger.exception(f"米游币任务 - 点赞: 请求失败")
                         return MissionStatus(network_error=True)
                 if count != like_times:
-                    await asyncio.sleep(plugin_config.preference.sleep_time)
+                    await asyncio.sleep(project_config.preference.sleep_time)
             get_post_status, posts = await self.get_posts(retry)
             if not get_post_status:
                 return MissionStatus(failed_getting_post=True)
@@ -402,7 +403,7 @@ class BaseMission:
                         res = await client.get(
                             URL_SHARE.format(posts[0]),
                             headers=headers,
-                            timeout=plugin_config.preference.timeout,
+                            timeout=project_config.preference.timeout,
                             cookies=self.account.cookies.dict(
                                 v2_stoken=True, cookie_type=True
                             ),
@@ -534,7 +535,7 @@ async def get_missions(
                         URL_MISSION,
                         headers=HEADERS_MISSION,
                         cookies=account.cookies.dict(v2_stoken=True, cookie_type=True),
-                        timeout=plugin_config.preference.timeout,
+                        timeout=project_config.preference.timeout,
                     )
                 api_result = ApiResultHandler.from_response(res.json())
                 if api_result.login_expired:
@@ -577,7 +578,7 @@ async def get_missions_state(
                         URL_MISSION_STATE,
                         headers=HEADERS_MISSION,
                         cookies=account.cookies.dict(v2_stoken=True, cookie_type=True),
-                        timeout=plugin_config.preference.timeout,
+                        timeout=project_config.preference.timeout,
                     )
                 api_result = ApiResultHandler.from_response(res.json())
                 if api_result.login_expired:

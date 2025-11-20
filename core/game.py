@@ -1,37 +1,34 @@
 import asyncio
 from typing import Optional, Iterable, Dict
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from services import BaseGameSign, BaseMission, get_missions_state
 from services.common import genshin_note, get_game_record, starrail_note
 from models import (
     MissionStatus,
-    plugin_config,
+    project_config,
     UserData,
     GenshinNoteNotice,
     StarRailNoteNotice,
-    PushConfig,
 )
 from utils import (
     get_file,
     logger,
     push,
-    PushConfig as UtilsPushConfig,
-    initConfig,
+    init_config,
     get_unique_users,
     get_validate,
 )
 
 
-# 使用 plugin_config 初始化推送配置
+# 使用 project_config 初始化推送配置
 try:
-    push_conf = UtilsPushConfig(PushConfig(plugin_config.push_config))
-    initConfig(push_conf)
+    init_config(project_config.push_config)
 except Exception as e:
     logger.error(f"初始化消息推送配置失败: {e}")
     # logger.exception(e)
-    push_conf = UtilsPushConfig(enable=False)
+    push_conf = init_config(enable=False)
 
 
 async def manually_game_sign():
@@ -53,7 +50,6 @@ async def manually_game_sign():
         result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
-        result_msg = "🎉执行完成，无记录消息"
         logger.info("🎉执行完成，无记录消息")
 
     return result_msg
@@ -77,13 +73,58 @@ async def manually_bbs_sign():
         result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
-        result_msg = "🎉执行完成，无记录消息"
         logger.info("🎉执行完成，无记录消息")
 
     return result_msg
 
 
-async def perform_game_sign(user: UserData, msgs_list=None):
+async def manually_genshin_note_check():
+    """进行原神便签检查"""
+
+    msgs_list = []
+
+    logger.info("⏳开始为所有用户执行原神便签...")
+    # 确保顺序执行
+    users = list(get_unique_users())  # 转换为列表确保顺序
+    for user_id_, user_ in users:
+        logger.info(f"⏳开始为用户 {user_id_} 执行原神便签...")
+        await genshin_note_check(user=user_, msgs_list=msgs_list)
+
+    result_msg = ""
+    if msgs_list:
+        # 每个消息单独一行，更清晰
+        result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
+        logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
+    else:
+        logger.info("🎉执行完成，无记录消息")
+
+    return result_msg
+
+
+async def manually_starrail_note_check():
+    """进行星穹铁道便签检查"""
+
+    msgs_list = []
+
+    logger.info("⏳开始为所有用户执行星穹铁道便签...")
+    # 确保顺序执行
+    users = list(get_unique_users())  # 转换为列表确保顺序
+    for user_id_, user_ in users:
+        logger.info(f"⏳开始为用户 {user_id_} 执行星穹铁道便签...")
+        await starrail_note_check(user=user_, msgs_list=msgs_list)
+
+    result_msg = ""
+    if msgs_list:
+        # 每个消息单独一行，更清晰
+        result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
+        logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
+    else:
+        logger.info("🎉执行完成，无记录消息")
+
+    return result_msg
+
+
+async def perform_game_sign(user: UserData, msgs_list=list[str]):
     """
     执行游戏签到函数，并发送给用户签到消息。
 
@@ -125,7 +166,7 @@ async def perform_game_sign(user: UserData, msgs_list=None):
             if (get_info_status and not info.is_sign) or not get_info_status:
                 sign_status, mmt_data = await signer.sign(account.platform)
                 if sign_status.need_verify:
-                    if plugin_config.preference.geetest_url or user.geetest_url:
+                    if project_config.preference.geetest_url or user.geetest_url:
                         for i in range(3):
                             msgs_list.append(
                                 f"⏳[验证码{i}] 正在尝试完成人机验证，请稍后..."
@@ -158,10 +199,10 @@ async def perform_game_sign(user: UserData, msgs_list=None):
                         # TODO: test 发送通知
                         push(push_message=message)
 
-                    await asyncio.sleep(plugin_config.preference.sleep_time)
+                    await asyncio.sleep(project_config.preference.sleep_time)
                     continue
 
-                await asyncio.sleep(plugin_config.preference.sleep_time)
+                await asyncio.sleep(project_config.preference.sleep_time)
 
             # 用户打开通知或手动签到时，进行通知
             if user.enable_notice:
@@ -185,7 +226,6 @@ async def perform_game_sign(user: UserData, msgs_list=None):
                         img_file = await get_file(award.icon)
                         msgs_list.append(msg)
                         push(push_message=msg, img_file=img_file)
-                        # TODO 发送图片 img_file
                     else:
                         msg = (
                             f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败！请尝试重新签到，"
@@ -193,7 +233,7 @@ async def perform_game_sign(user: UserData, msgs_list=None):
                         )
 
                 # push(push_message=msg)
-            await asyncio.sleep(plugin_config.preference.sleep_time)
+            await asyncio.sleep(project_config.preference.sleep_time)
 
         if msgs_list:
             for msg in msgs_list:
@@ -204,13 +244,13 @@ async def perform_game_sign(user: UserData, msgs_list=None):
                 push_message=f"⚠️您的米游社账户 {account.display_name} 下不存在任何游戏账号，已跳过签到"
             )
 
-    # 如果全部登录失效，则关闭通知
-    if len(failed_accounts) == len(user.accounts):
-        user.enable_notice = False
-        # PluginDataManager.write_plugin_data()
+    # # 如果全部登录失效，则关闭通知
+    # if len(failed_accounts) == len(user.accounts):
+    #     user.enable_notice = False
+    #     # ConfigDataManager.write_plugin_data()
 
 
-async def perform_bbs_sign(user: UserData, msgs_list=None):
+async def perform_bbs_sign(user: UserData, msgs_list=list[str]):
     """
     执行米游币任务函数，并发送给用户任务执行消息。
 
@@ -335,7 +375,7 @@ async def perform_bbs_sign(user: UserData, msgs_list=None):
     # 如果全部登录失效，则关闭通知
     if len(failed_accounts) == len(user.accounts):
         user.enable_notice = False
-        # PluginDataManager.write_plugin_data()
+        # ConfigDataManager.write_plugin_data()
 
 
 class NoteNoticeStatus(BaseModel):
@@ -343,18 +383,8 @@ class NoteNoticeStatus(BaseModel):
     账号便笺通知状态
     """
 
-    genshin: GenshinNoteNotice = GenshinNoteNotice(
-        current_resin=False,
-        current_resin_full=False,
-        current_home_coin=False,
-        transformer=False,
-    )
-    starrail: StarRailNoteNotice = StarRailNoteNotice(
-        current_stamina=False,
-        current_stamina_full=False,
-        current_train_score=False,
-        current_rogue_score=False,
-    )
+    genshin: GenshinNoteNotice = Field(default_factory=GenshinNoteNotice)
+    starrail: StarRailNoteNotice = Field(default_factory=StarRailNoteNotice)
 
     model_config = ConfigDict(extra="ignore")
 
@@ -363,12 +393,11 @@ note_notice_status: Dict[str, NoteNoticeStatus] = {}
 """记录账号对应的便笺通知状态"""
 
 
-async def genshin_note_check(user: UserData, user_ids: Iterable[str]):
+async def genshin_note_check(user: UserData, msgs_list=list[str]):
     """
     查看原神实时便笺函数，并发送给用户任务执行消息。
 
     :param user: 用户对象
-    :param user_ids: 发送通知的所有用户ID
     :param matcher: 事件响应器
     """
     for account in user.accounts.values():
@@ -454,11 +483,14 @@ async def genshin_note_check(user: UserData, user_ids: Iterable[str]):
             )
 
             # TODO 测试日志和推送
+            msgs_list.append(msg)
             logger.info(msg)
-            push(push_message=msg)
+            # push(push_message=msg)
+
+            return msgs_list
 
 
-async def starrail_note_check(user: UserData, user_ids: Iterable[str]):
+async def starrail_note_check(user: UserData, msgs_list: list[str]):
     """
     查看星铁实时便笺函数，并发送给用户任务执行消息。
 
@@ -514,7 +546,7 @@ async def starrail_note_check(user: UserData, user_ids: Iterable[str]):
 
             # 每周模拟宇宙积分提醒
             if note.current_rogue_score != note.max_rogue_score:
-                if plugin_config.preference.notice_time:
+                if project_config.preference.notice_time:
                     msg += "❕您的模拟宇宙积分还没打满\n\n"
                     do_notice = True
 
@@ -536,4 +568,7 @@ async def starrail_note_check(user: UserData, user_ids: Iterable[str]):
 
             # TODO 测试日志和推送
             logger.info(msg)
-            push(push_message=msg)
+            msgs_list.append(msg)
+            # push(push_message=msg)
+
+            return msgs_list

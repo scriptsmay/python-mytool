@@ -5,7 +5,7 @@ import urllib.parse
 import hashlib
 from typing import Optional, Dict, Any, Union, List
 from dataclasses import dataclass, field
-from .logger import logger
+from config.logger import logger
 from configparser import ConfigParser
 
 

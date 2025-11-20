@@ -18,11 +18,12 @@ from models import (
     GameSignInfo,
     GeetestResult,
     MmtData,
-    plugin_config,
-    plugin_env,
+    project_config,
+    project_env,
     UserAccount,
 )
-from utils import logger, generate_ds, get_async_retry
+from config import logger
+from utils import generate_ds, get_async_retry
 
 __all__ = [
     "BaseGameSign",
@@ -53,7 +54,7 @@ class BaseGameSign:
         "Origin": "https://webstatic.mihoyo.com",
         "Connection": "keep-alive",
         "Accept": "application/json, text/plain, */*",
-        "User-Agent": plugin_env.device_config.USER_AGENT_MOBILE,
+        "User-Agent": project_env.device_config.USER_AGENT_MOBILE,
         "Accept-Language": "zh-CN,zh-Hans;q=0.9",
         "Referer": "https://webstatic.mihoyo.com/",
         "Accept-Encoding": "gzip, deflate, br",
@@ -98,7 +99,7 @@ class BaseGameSign:
                         res = await client.get(
                             self.url_reward,
                             headers=self.headers_reward,
-                            timeout=plugin_config.preference.timeout,
+                            timeout=project_config.preference.timeout,
                         )
                     award_list = []
                     for award in res.json()["data"]["awards"]:
@@ -142,7 +143,7 @@ class BaseGameSign:
                             self.url_info,
                             headers=headers,
                             cookies=self.account.cookies.dict(),
-                            timeout=plugin_config.preference.timeout,
+                            timeout=project_config.preference.timeout,
                         )
                     api_result = ApiResultHandler.from_response(res.json())
                     if api_result.login_expired:
@@ -202,15 +203,15 @@ class BaseGameSign:
             await device_save(self.account)
             headers["x-rpc-device_id"] = self.account.device_id_android
             headers["x-rpc-device_model"] = (
-                plugin_env.device_config.X_RPC_DEVICE_MODEL_ANDROID
+                project_env.device_config.X_RPC_DEVICE_MODEL_ANDROID
             )
-            headers["User-Agent"] = plugin_env.device_config.USER_AGENT_ANDROID
+            headers["User-Agent"] = project_env.device_config.USER_AGENT_ANDROID
             headers["x-rpc-device_name"] = (
-                plugin_env.device_config.X_RPC_DEVICE_NAME_ANDROID
+                project_env.device_config.X_RPC_DEVICE_NAME_ANDROID
             )
-            headers["x-rpc-channel"] = plugin_env.device_config.X_RPC_CHANNEL_ANDROID
+            headers["x-rpc-channel"] = project_env.device_config.X_RPC_CHANNEL_ANDROID
             headers["x-rpc-sys_version"] = (
-                plugin_env.device_config.X_RPC_SYS_VERSION_ANDROID
+                project_env.device_config.X_RPC_SYS_VERSION_ANDROID
             )
             headers["x-rpc-client_type"] = "2"
             headers["DS"] = generate_ds(data=content)
@@ -230,7 +231,7 @@ class BaseGameSign:
                             self.url_sign,
                             headers=headers,
                             cookies=self.account.cookies.dict(),
-                            timeout=plugin_config.preference.timeout,
+                            timeout=project_config.preference.timeout,
                             json=content,
                         )
 

@@ -13,8 +13,8 @@ import logging
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core import manually_game_sign, manually_bbs_sign
-from models import plugin_config
-from utils import logger
+from models import project_config
+from config import logger
 
 
 def game_sign_task():
@@ -28,11 +28,10 @@ def bbs_sign_task():
 async def main_task():
     logger.info("⏳开始执行任务...")
     await manually_game_sign()
-
     # 等待 sleep_time
-    await asyncio.sleep(plugin_config.preference.sleep_time)
-
+    await asyncio.sleep(project_config.preference.sleep_time)
     await manually_bbs_sign()
+    logger.info("✅任务执行完毕！")
 
 
 if __name__ == "__main__":
