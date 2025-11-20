@@ -15,19 +15,8 @@ try:
     init_config(project_config.push_config)
 except Exception as e:
     logger.error(f"❌初始化推送配置失败：{e}")
-    # 注意：如果推送配置初始化失败，push 可能也无法工作
-    # 可以考虑使用备用通知方式或直接退出
     print(f"❌初始化推送配置失败：{e}")
     exit(1)
-
-
-def debug_info():
-    # 调试信息
-    print("🔍 调试推送配置信息:")
-    if hasattr(project_config.push_config, "model_dump"):
-        print(
-            f"配置详细信息: {json.dumps(project_config.push_config.model_dump(), indent=4, ensure_ascii=False)}"
-        )
 
 
 async def main_task():
@@ -38,10 +27,10 @@ async def main_task():
     if msg:
         push(push_message=msg)
 
-    # await asyncio.sleep(project_config.preference.sleep_time)
-    # msg2 = await manually_starrail_note_check()
+    await asyncio.sleep(project_config.preference.sleep_time)
+    msg2 = await manually_starrail_note_check()
     # logger.info(msg2)
-    # push(push_message=msg2)
+    push(push_message=msg2)
 
     logger.info("✅任务执行完毕！")
 

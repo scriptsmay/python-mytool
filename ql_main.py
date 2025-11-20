@@ -5,11 +5,19 @@ new Env('米忽悠家签到');
 import notify
 import os
 import asyncio
-from utils import push, logger
+from utils import push, init_config, logger
 
 
 def ql_push(status_code, title, message):
     if os.getenv("mihuyo_push") == "1":
+        try:
+            from models import project_config
+
+            init_config(project_config.push_config)
+            push(status=status_code, push_message=message)
+        except Exception as e:
+            logger.error(f"❌初始化推送配置失败：{e}")
+            print(f"❌初始化推送配置失败：{e}")
         push.push(status_code, message)
     else:
         notify.send(title, message)
