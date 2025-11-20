@@ -47,7 +47,7 @@ async def manually_game_sign():
     result_msg = ""
     if msgs_list:
         # 每个消息单独一行，更清晰
-        result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
+        result_msg = "\n----------------\n".join([f"|- {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
         logger.info("🎉执行完成，无记录消息")
@@ -70,7 +70,7 @@ async def manually_bbs_sign():
     result_msg = ""
     if msgs_list:
         # 每个消息单独一行，更清晰
-        result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
+        result_msg = "\n----------------\n".join([f"|- {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
         logger.info("🎉执行完成，无记录消息")
@@ -93,7 +93,7 @@ async def manually_genshin_note_check():
     result_msg = ""
     if msgs_list:
         # 每个消息单独一行，更清晰
-        result_msg = "\n".join([f"  • {msg}" for msg in msgs_list])
+        result_msg = "\n----------------\n".join([f"|- {msg}" for msg in msgs_list])
         logger.info(f"🎉执行完成，共 {len(msgs_list)} 条记录:\n{result_msg}")
     else:
         logger.info("🎉执行完成，无记录消息")
