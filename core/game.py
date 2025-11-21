@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Type
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,12 +37,12 @@ except Exception as e:
     init_config(enable=False)
 
 
-async def execute_sequential_tasks(task_name: str, task_func, process_func) -> str:
+async def execute_sequential_tasks(task_name: str, process_func) -> str:
     """执行顺序任务的通用函数"""
     msgs_list = []
     users = list(get_unique_users())
 
-    logger.info(f"⏳开始为所有用户执行{task_name}...")
+    # logger.info(f"⏳开始为所有用户执行{task_name}...")
     for user_id, user_data in users:
         logger.info(f"⏳开始为用户 {user_id} 执行{task_name}...")
         await process_func(user=user_data, msgs_list=msgs_list)
@@ -53,30 +53,22 @@ async def execute_sequential_tasks(task_name: str, task_func, process_func) -> s
 
 async def manually_game_sign() -> str:
     """进行游戏签到"""
-    return await execute_sequential_tasks(
-        "游戏签到", perform_game_sign, perform_game_sign
-    )
+    return await execute_sequential_tasks("游戏签到", perform_game_sign)
 
 
 async def manually_bbs_sign() -> str:
     """顺序执行所有用户的米游币任务"""
-    return await execute_sequential_tasks(
-        "米游币任务", perform_bbs_sign, perform_bbs_sign
-    )
+    return await execute_sequential_tasks("米游币任务", perform_bbs_sign)
 
 
 async def manually_genshin_note_check() -> str:
     """进行原神便签检查"""
-    return await execute_sequential_tasks(
-        "原神便签", genshin_note_check, genshin_note_check
-    )
+    return await execute_sequential_tasks("原神便签", genshin_note_check)
 
 
 async def manually_starrail_note_check() -> str:
     """进行星穹铁道便签检查"""
-    return await execute_sequential_tasks(
-        "星穹铁道便签", starrail_note_check, starrail_note_check
-    )
+    return await execute_sequential_tasks("星穹铁道便签", starrail_note_check)
 
 
 def _format_result(msgs_list: List[str], task_name: str) -> str:
@@ -116,7 +108,7 @@ async def _process_account_game_sign(
             f"⚠️您的米游社账户 {account.display_name} 下不存在任何游戏账号，已跳过签到"
         )
         msgs_list.append(message)
-        push(push_message=message)
+        # push(push_message=message)
         return
 
     for signer in games_with_record:
@@ -227,7 +219,8 @@ async def _process_sign_result(
 
         if info.is_sign:
             img_file = await get_file(award.icon)
-            push(push_message=msg, img_file=img_file)
+            # TODO: 优化图片推送方式
+            push(push_message=msg, img_file=img_file, img_url=award.icon)
         else:
             msg = (
                 f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败！请尝试重新签到，"
@@ -261,7 +254,7 @@ async def _process_account_bbs_sign(
     )
 
     if not finished:
-        await _execute_missions(account, missions_state, msgs_list)
+        await _execute_missions(account, user, missions_state, msgs_list)
 
     if user.enable_notice:
         await _send_mission_notice(account, myb_before_mission, msgs_list)
@@ -284,7 +277,10 @@ def _handle_missions_state_failure(
 
 
 async def _execute_missions(
-    account: UserAccount, missions_state: MissionState, msgs_list: List[str]
+    account: UserAccount,
+    user: UserData,
+    missions_state: MissionState,
+    msgs_list: List[str],
 ) -> None:
     """执行各项任务"""
     if not account.mission_games:
@@ -301,11 +297,17 @@ async def _execute_missions(
             )
             continue
 
-        await _execute_single_mission(account, class_type, missions_state, msgs_list)
+        await _execute_single_mission(
+            account, user, class_type, missions_state, msgs_list
+        )
 
 
 async def _execute_single_mission(
-    account: UserAccount, class_type, missions_state: MissionState, msgs_list: List[str]
+    account: UserAccount,
+    user: UserData,
+    class_type: Type[BaseMission],
+    missions_state: MissionState,
+    msgs_list: List[str],
 ) -> None:
     """执行单个分区任务"""
     mission_obj = class_type(account)
@@ -319,7 +321,7 @@ async def _execute_single_mission(
 
     for key_name in missions_state.state_dict:
         if key_name == BaseMission.SIGN:
-            sign_status, sign_points = await mission_obj.sign(account.user)
+            sign_status, sign_points = await mission_obj.sign(user)
         elif key_name == BaseMission.VIEW:
             read_status = await mission_obj.read()
         elif key_name == BaseMission.LIKE:

@@ -37,13 +37,13 @@ except ImportError:
 
 # 推送标题映射
 PUSH_TITLES = {
-    -99: "「米忽悠签到」依赖缺失",
-    -2: "「米忽悠签到」StatusID 错误",
-    -1: "「米忽悠签到」Config版本已更新",
-    0: "「米忽悠签到」执行成功",
-    1: "「米忽悠签到」执行失败",
-    2: "「米忽悠签到」部分账号执行失败",
-    3: "「米忽悠签到」社区/游戏道具签到触发验证码！",
+    -99: "「米忽悠工具」依赖缺失",
+    -2: "「米忽悠工具」StatusID 错误",
+    -1: "「米忽悠工具」Config版本已更新",
+    0: "「米忽悠工具」执行完成",
+    1: "「米忽悠工具」执行失败",
+    2: "「米忽悠工具」部分账号执行失败",
+    3: "「米忽悠工具」社区/游戏道具签到触发验证码！",
 }
 
 # 支持的推送方式
@@ -116,12 +116,11 @@ class PushHandler:
         self,
         config: Optional[NewPushConfig] = None,
         config_file: Optional[str] = None,
-        http_client: Optional[Any] = None,
     ):
         """
         初始化推送处理器
         """
-        self.http = http_client or get_new_session()
+        self.http = get_new_session()
         self.config = config or self._load_config_from_file(config_file)
 
     def _load_config_from_file(
@@ -177,15 +176,12 @@ class PushHandler:
                 result = result.replace(block_key, "*" * len(block_key))
         return result
 
-    def _prepare_message(
-        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
-    ) -> str:
+    def _prepare_message(self, status_id: int, push_message: str) -> str:
         """准备消息内容"""
         title = get_push_title(status_id)
         message = f"{title}\n\n{push_message}"
-        if img_file:
-            base64_data = base64.b64encode(img_file).decode("utf-8")
-            message = f"{message}\n\n![图片](data:image/png;base64,{base64_data})"
+
+        logger.debug(f"准备发送的消息内容: {message}")
         return message
 
     def _safe_log_error(self, service_name: str, exception: Exception):
@@ -246,7 +242,11 @@ class PushHandler:
             return False
 
     def telegram(
-        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+        self,
+        status_id: int,
+        push_message: str,
+        img_file: Optional[bytes] = None,
+        img_url: Optional[str] = None,
     ) -> bool:
         """Telegram 推送"""
         if not self.check_telegram_connectivity():
@@ -257,13 +257,24 @@ class PushHandler:
             logger.warning("Telegram 配置不完整")
             return False
 
-        message = self._prepare_message(status_id, push_message, img_file)
-        http_proxy = self._get_config_value(config, "http_proxy")
-        session = get_new_session_use_proxy(http_proxy) if http_proxy else self.http
+        message = self._prepare_message(status_id, push_message)
 
         api_url = self._get_config_value(config, "api_url")
         bot_token = self._get_config_value(config, "bot_token")
         chat_id = self._get_config_value(config, "chat_id")
+
+        # 发送图片接口是另一个
+        # https://api.telegram.org/bot<your_bot_token>/sendPhoto
+        if img_file:
+            url = f"https://{api_url}/bot{bot_token}/sendPhoto"
+            files = {"photo": img_file}
+            data = {"chat_id": chat_id, "caption": message}
+            try:
+                return self._send_request("POST", url, data=data, files=files)
+                # logger.info("Telegram 图片推送成功")
+            except Exception as e:
+                self._safe_log_error("Telegram 图片推送", e)
+                return False
 
         return self._send_request(
             "POST",
@@ -272,7 +283,11 @@ class PushHandler:
         )
 
     def dingrobot(
-        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+        self,
+        status_id: int,
+        push_message: str,
+        img_file: Optional[bytes] = None,
+        img_url: Optional[str] = None,
     ) -> bool:
         """钉钉群机器人推送"""
         config = self.config.dingrobot
@@ -295,7 +310,8 @@ class PushHandler:
             sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
             api_url = f"{api_url}&timestamp={timestamp}&sign={sign}"
 
-        message = self._prepare_message(status_id, push_message, img_file)
+        message = self._prepare_message(status_id, push_message)
+        # TODO: img_file 暂不支持
 
         return self._send_request(
             "POST",
@@ -305,7 +321,11 @@ class PushHandler:
         )
 
     def feishubot(
-        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+        self,
+        status_id: int,
+        push_message: str,
+        img_file: Optional[bytes] = None,
+        img_url: Optional[str] = None,
     ) -> bool:
         """飞书机器人推送"""
         config = self.config.feishubot
@@ -313,8 +333,10 @@ class PushHandler:
             logger.warning("飞书机器人配置不完整")
             return False
 
-        message = self._prepare_message(status_id, push_message, img_file)
+        message = self._prepare_message(status_id, push_message)
         webhook_url = self._get_config_value(config, "webhook")
+
+        # TODO: img_file 暂不支持
 
         return self._send_request(
             "POST",
@@ -324,7 +346,11 @@ class PushHandler:
         )
 
     def bark(
-        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+        self,
+        status_id: int,
+        push_message: str,
+        img_file: Optional[bytes] = None,
+        img_url: Optional[str] = None,
     ) -> bool:
         """Bark 推送"""
         config = self.config.bark
@@ -342,13 +368,19 @@ class PushHandler:
         api_url = self._get_config_value(config, "api_url")
         token = self._get_config_value(config, "token")
 
+        # TODO: img_file 暂不支持
+
         return self._send_request(
             "GET",
             url=f"{api_url}/{token}/{send_title}/{encoded_message}?{icon_param}",
         )
 
     def gotify(
-        self, status_id: int, push_message: str, img_file: Optional[bytes] = None
+        self,
+        status_id: int,
+        push_message: str,
+        img_file: Optional[bytes] = None,
+        img_url: Optional[str] = None,
     ) -> bool:
         """Gotify 推送"""
         config = self.config.gotify
@@ -356,20 +388,30 @@ class PushHandler:
             logger.warning("Gotify 配置不完整")
             return False
 
-        message = self._prepare_message(status_id, push_message, img_file)
+        message = self._prepare_message(status_id, push_message)
+
         api_url = self._get_config_value(config, "api_url")
         token = self._get_config_value(config, "token")
         priority = self._get_config_value(config, "priority", 5)
+
+        prepare_json = {
+            "title": get_push_title(status_id),
+            "priority": priority,
+        }
+
+        # TODO: img_file 暂不支持 base64编码的方式，后续考虑改成oss等外链
+        if img_url:
+            message = f"{message}\n\n![图片]({img_url})"
+            prepare_json["extras"] = {
+                "client::display": {"contentType": "text/markdown"}
+            }
+        prepare_json["message"] = message
 
         return self._send_request(
             "POST",
             url=f"{api_url}/message?token={token}",
             headers={"Content-Type": "application/json; charset=utf-8"},
-            json={
-                "title": get_push_title(status_id),
-                "message": message,
-                "priority": priority,
-            },
+            json=prepare_json,
         )
 
     def webhook(
@@ -381,7 +423,7 @@ class PushHandler:
             logger.warning("WebHook 配置不完整")
             return False
 
-        message = self._prepare_message(status_id, push_message, img_file)
+        message = self._prepare_message(status_id, push_message)
         webhook_url = self._get_config_value(config, "webhook_url")
 
         return self._send_request(
@@ -392,7 +434,11 @@ class PushHandler:
         )
 
     def push(
-        self, status: int = 0, push_message: str = "", img_file: Optional[bytes] = None
+        self,
+        status: int = 0,
+        push_message: str = "",
+        img_file: Optional[bytes] = None,
+        img_url: Optional[str] = None,
     ) -> bool:
         """执行推送"""
         logger.debug(f"消息内容: {push_message}")
@@ -419,7 +465,7 @@ class PushHandler:
             logger.debug(f"使用推送服务: {push_server}")
             try:
                 push_method = getattr(self, push_server)
-                success = push_method(status, processed_message, img_file)
+                success = push_method(status, processed_message, img_file, img_url)
                 status_msg = "成功" if success else "失败"
                 logger.info(f"{push_server} - 推送{status_msg}")
                 results.append(success)
@@ -444,6 +490,7 @@ def push(
     status: int = 0,
     push_message: str = "",
     img_file: Optional[bytes] = None,
+    img_url: Optional[str] = None,
     config: Optional[NewPushConfig] = None,
     config_file: Optional[str] = None,
 ) -> bool:
@@ -457,4 +504,4 @@ def push(
     else:
         push_handler = PushHandler()
 
-    return push_handler.push(status, push_message, img_file)
+    return push_handler.push(status, push_message, img_file, img_url)
