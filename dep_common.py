@@ -14,10 +14,11 @@ def ql_push(title, message):
         except Exception as e:
             logger.error(f"❌初始化推送配置失败：{e}")
             print(f"❌初始化推送配置失败：{e}")
-    elif "QLAPI" in globals():  # 判断 QLAPI 是否已在全局作用域中定义
-        logger.info("🚀 使用 QLAPI 推送...")
+    else:
         try:
             QLAPI.notify(title, message)
             logger.info("✅ QLAPI 通知发送成功")
+        except NameError:
+            logger.warning("⚠️ QLAPI 未定义，跳过推送")
         except Exception as e:
             logger.error(f"❌ QLAPI 通知失败：{e}")
