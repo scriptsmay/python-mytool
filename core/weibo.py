@@ -10,6 +10,7 @@ import urllib3
 import warnings
 
 from utils import logger
+from models import project_config
 
 # 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -434,9 +435,10 @@ async def run_wb_task(cookies: str) -> str:
         return error_msg
 
 
-async def manually_weibo_sign(cookies: str) -> str:
+async def manually_weibo_sign() -> str:
     """手动执行微博签到的入口函数（与其他模块保持一致）"""
-    return await run_wb_task(cookies)
+
+    return await run_wb_task(project_config.weibo_cookie)
 
 
 # 保留原有使用方式供兼容

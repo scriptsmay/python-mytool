@@ -21,7 +21,7 @@ except Exception as e:
 
 async def weibo_sign_task():
     """微博超话签到主函数"""
-    message = await manually_weibo_sign(project_config.weibo_cookie)
+    message = await manually_weibo_sign()
     if message:
         push(title="微博超话签到", push_message=message)
     return message
