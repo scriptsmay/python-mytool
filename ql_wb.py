@@ -5,7 +5,7 @@ new Env('微博超话签到任务');
 import asyncio
 
 from config import logger
-from ql_common import ql_push
+from dep_common import ql_push
 
 
 try:

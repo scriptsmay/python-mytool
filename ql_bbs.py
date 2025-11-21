@@ -6,7 +6,7 @@ import asyncio
 from utils import push, init_config
 
 from config import logger
-from ql_common import ql_push
+from dep_common import ql_push
 
 
 try:

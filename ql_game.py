@@ -5,7 +5,7 @@ new Env('米忽悠家游戏签到');
 import asyncio
 
 from config import logger
-from ql_common import ql_push
+from dep_common import ql_push
 
 
 try:
