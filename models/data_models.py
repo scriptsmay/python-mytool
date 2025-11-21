@@ -814,6 +814,9 @@ class ConfigData(BaseModel):
     # 用户数据
     users: Dict[str, UserData] = Field(default_factory=dict)
 
+    # 微博cookie
+    weibo_cookie: Optional[str] = Field(default=None)
+
     model_config = ConfigDict(extra="ignore")
 
 
@@ -862,9 +865,6 @@ class ConfigDataManager:
         logger.info("🆕 创建默认配置对象")
         cls.config_data = ConfigData()
         cls._initialized = True
-        # 移除了 cls.save_config() 调用
-
-    # 移除了 save_config 方法
 
     # 便捷访问方法 - 添加安全检查
     @classmethod

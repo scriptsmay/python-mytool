@@ -10,23 +10,17 @@ from utils import push, init_config
 from config import logger
 
 
-def main_push(status_code, title, message):
-    """推送消息"""
+async def game_sign():
+    """游戏签到主函数"""
+    message = await manually_game_sign()
     try:
         from models import project_config
 
         init_config(project_config.push_config)
-        push(status=status_code, push_message=message)
+        push(title="米忽悠游戏签到任务", push_message=message)
     except Exception as e:
         logger.error(f"❌初始化推送配置失败：{e}")
         print(f"❌初始化推送配置失败：{e}")
-
-
-async def game_sign():
-    """游戏签到主函数"""
-    title = "米哈游游戏签到"
-    message = await manually_game_sign()
-    main_push(0, title, message)
     return message
 
 

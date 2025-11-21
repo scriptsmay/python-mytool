@@ -14,7 +14,9 @@ if project_config is None:
     ConfigDataManager.config_data = project_config
 
 logger.info(
-    f"✅ 配置加载成功 - 版本: {project_config.version}, 用户数: {len(project_config.users)}"
+    f"✅ 配置加载成功 - 版本: {project_config.version},"
+    f"用户数: {len(project_config.users)}, "
+    f"weibo_cookie: {'已配置' if project_config.weibo_cookie else '未配置'}"
     f"\n   推送配置: enable: {project_config.push_config.enable}, servers: {project_config.push_config.push_servers}"
 )
 

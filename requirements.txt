@@ -5,3 +5,4 @@ pydantic
 tenacity
 pytz
 pydantic-settings
+bs4

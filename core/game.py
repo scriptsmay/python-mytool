@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional, Dict, List, Type
+from typing import Dict, List, Type
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,8 +10,6 @@ from models import (
     project_config,
     UserData,
     UserAccount,
-    GameRecord,
-    GameSignInfo,
     GenshinNote,
     GenshinNoteNotice,
     StarRailNote,
@@ -220,7 +218,7 @@ async def _process_sign_result(
         if info.is_sign:
             img_file = await get_file(award.icon)
             # TODO: 优化图片推送方式
-            push(push_message=msg, img_file=img_file, img_url=award.icon)
+            # push(push_message=msg, img_file=img_file, img_url=award.icon)
         else:
             msg = (
                 f"⚠️账户 {account.display_name} 🎮『{signer.name}』签到失败！请尝试重新签到，"

@@ -64,6 +64,7 @@
       }
     }
   },
+  "weibo_cookie": "",
   "push_config": {
     "enable": false,
     "error_push_only": false,
@@ -71,8 +72,7 @@
     "telegram": {
       "api_url": "api.telegram.org",
       "bot_token": "1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZ",
-      "chat_id": "1234567890",
-      "http_proxy": ""
+      "chat_id": "1234567890"
     },
     "gotify": {
       "api_url": "https://gotify.example.com",
