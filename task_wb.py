@@ -19,7 +19,7 @@ except Exception as e:
     print(f"❌初始化推送配置失败：{e}")
 
 
-async def task_main():
+async def weibo_sign_task():
     """微博超话签到主函数"""
     message = await manually_weibo_sign(project_config.weibo_cookie)
     if message:
@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     async def main():
         logger.info("🎮开始执行微博超话签到...")
-        await task_main()
+        await weibo_sign_task()
         logger.info(f"✅微博超话签到完成")
 
     asyncio.run(main())

@@ -10,7 +10,7 @@ from utils import push, init_config
 from config import logger
 
 
-async def main():
+async def bbs_sign_task():
     logger.info("🏠开始执行社区签到...")
     message = await manually_bbs_sign()
     try:
@@ -28,4 +28,4 @@ async def main():
 if __name__ == "__main__":
     """单独运行社区签到"""
 
-    asyncio.run(main())
+    asyncio.run(bbs_sign_task())

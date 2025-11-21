@@ -14,18 +14,19 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from task_game import game_sign
-from task_bbs import bbs_sign
+from task_bbs import bbs_sign_task
+from task_wb import weibo_sign_task
 from config import logger
 
 
-def main_push(status_code, title, message):
+def main_push(title, message):
     """推送消息"""
     try:
         from models import project_config
         from utils import push, init_config
 
         init_config(project_config.push_config)
-        push(status=status_code, push_message=message)
+        push(title=title, push_message=message)
     except Exception as e:
         logger.error(f"❌初始化推送配置失败：{e}")
         print(f"❌初始化推送配置失败：{e}")
@@ -37,24 +38,29 @@ async def main():
 
     # 顺序执行游戏签到和社区签到
     try:
+        messagebox = []
         # 先执行游戏签到
-        logger.info("🎮开始执行游戏签到...")
         game_result = await game_sign()
-        logger.info(f"✅游戏签到完成: {game_result}")
+        messagebox.append(game_result)
 
         # 等待一段时间再执行社区签到
-        await asyncio.sleep(5)
+        await asyncio.sleep(15)
 
         # 执行社区签到
-        logger.info("🏠开始执行社区签到...")
-        bbs_result = await bbs_sign()
-        logger.info(f"✅社区签到完成: {bbs_result}")
+        bbs_result = await bbs_sign_task()
+        messagebox.append(bbs_result)
 
-        logger.info("🎉所有签到任务执行完成！")
+        await asyncio.sleep(15)
+        # 微博超话签到
+        wb_result = await weibo_sign_task()
+        messagebox.append(wb_result)
+
+        logger.info("🎉所有任务执行完成！")
+        main_push("米哈游任务执行完成", "\n".join(messagebox))
 
     except Exception as e:
         logger.error(f"❌任务执行失败: {e}")
-        main_push(-1, "米哈游签到失败", f"执行过程中出现错误: {e}")
+        main_push("米哈游任务失败", f"执行过程中出现错误: {e}")
         raise
 
 

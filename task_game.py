@@ -27,9 +27,4 @@ async def game_sign():
 if __name__ == "__main__":
     """单独运行游戏签到"""
 
-    async def main():
-        logger.info("🎮开始执行游戏签到...")
-        result = await game_sign()
-        logger.info(f"✅游戏签到完成: {result}")
-
-    asyncio.run(main())
+    asyncio.run(game_sign())
