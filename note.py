@@ -28,9 +28,11 @@ async def main_task():
         push(push_message=msg)
 
     await asyncio.sleep(project_config.preference.sleep_time)
+
     msg2 = await manually_starrail_note_check()
     # logger.info(msg2)
-    push(push_message=msg2)
+    if msg2:
+        push(push_message=msg2)
 
     logger.info("✅任务执行完毕！")
 

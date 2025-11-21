@@ -13,34 +13,22 @@ import sys
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from core import manually_game_sign, manually_bbs_sign
-from utils import push, init_config
+from task_game import game_sign
+from task_bbs import bbs_sign
 from config import logger
 
 
 def main_push(status_code, title, message):
+    """推送消息"""
     try:
         from models import project_config
+        from utils import push, init_config
 
         init_config(project_config.push_config)
         push(status=status_code, push_message=message)
     except Exception as e:
         logger.error(f"❌初始化推送配置失败：{e}")
         print(f"❌初始化推送配置失败：{e}")
-
-
-async def game_sign():
-    title = "米哈游游戏签到"
-    message = await manually_game_sign()
-    main_push(0, title, message)
-    return message
-
-
-async def bbs_sign():
-    title = "米哈游社区签到"
-    message = await manually_bbs_sign()
-    main_push(0, title, message)
-    return message
 
 
 async def main():

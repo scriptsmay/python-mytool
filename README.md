@@ -43,13 +43,13 @@ my_project/
 ### 订阅管理
 
 ```text
-名称：米忽悠游戏签到
-类型：公开仓库
-链接：https://github.com/scriptsmay/python-mytool.git
-定时类型：crontab
-定时规则：2 2 28 * *
-白名单：ql_main.py
-依赖文件：.py|config.example.json
+名称： 米忽悠游戏签到
+类型： 公开仓库
+链接： https://github.com/scriptsmay/python-mytool.git
+定时类型： crontab
+定时规则： 2 2 28 * *
+白名单： ql_*.py
+依赖文件： .py|config.example.json
 ```
 
 ### 依赖管理
