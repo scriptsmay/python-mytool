@@ -1,14 +1,14 @@
 """
+cron:20 0 * * *
 new Env('米忽悠家游戏签到');
 """
 
 import asyncio
 
-from config import logger
-from dep_common import ql_push
-
 
 try:
+    from config import logger
+    from dep_common import ql_push
     from core import manually_game_sign
 except (ImportError, NameError) as e:
     ql_push("「米游社脚本」依赖缺失", "脚本加入新模块，请更新青龙拉取范围")

@@ -882,6 +882,7 @@ class ConfigDataManager:
         logger.info("🆕 创建默认配置对象")
         cls.config_data = ConfigData()
         cls._initialized = True
+        cls.save_config()
 
     @classmethod
     def save_config(cls):

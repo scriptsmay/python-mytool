@@ -1,15 +1,13 @@
 """
+cron:20 1 * * *
 new Env('米忽悠家社区任务');
 """
 
 import asyncio
-from utils import push, init_config
-
-from config import logger
-from dep_common import ql_push
-
 
 try:
+    from config import logger
+    from dep_common import ql_push
     from core import manually_bbs_sign
 except (ImportError, NameError) as e:
     ql_push("「米游社脚本」依赖缺失", "脚本加入新模块，请更新青龙拉取范围")

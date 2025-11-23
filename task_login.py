@@ -9,9 +9,9 @@ from core import mys_login
 from utils import push, init_config
 from config import logger
 
-import logging
-
-logger.setLevel(logging.DEBUG)
+# debug
+# import logging
+# logger.setLevel(logging.DEBUG)
 
 try:
     from models import project_config
@@ -35,7 +35,7 @@ if __name__ == "__main__":
 
     async def main():
         logger.info("🎮开始执行米游社登录...")
-        await mys_login_task()
+        await mys_login()
         logger.info(f"✅米游社登录完成")
 
     asyncio.run(main())
