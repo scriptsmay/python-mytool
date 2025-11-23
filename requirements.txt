@@ -6,3 +6,4 @@ tenacity
 pytz
 pydantic-settings
 bs4
+qrcode_terminal

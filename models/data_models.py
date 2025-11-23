@@ -27,11 +27,12 @@ from pydantic import BaseModel, ValidationError, field_validator, ConfigDict, Fi
 from pydantic_settings import BaseSettings
 
 from config._version import __version__
+from config.logger import logger
 
 # 改为在文件内部定义 logger
-import logging
+# import logging
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     IntStr = Union[int, str]
@@ -676,12 +677,28 @@ class BBSCookies(BaseModelWithSetter, BaseModelWithUpdate):
 
     def update(self, cookies: Union[Dict[str, str], Cookies, "BBSCookies"]):
         """更新Cookies"""
-        if not isinstance(cookies, BBSCookies):
+        if isinstance(cookies, dict):
+            # 处理字典
             self.stoken = cookies.get("stoken") or self.stoken
             self.bbs_uid = cookies.get("bbs_uid") or self.bbs_uid
-            cookies.pop("stoken", None)
-            cookies.pop("bbs_uid", None)
-        return super().update(cookies)
+
+            # 更新其他字段
+            for key, value in cookies.items():
+                if (
+                    hasattr(self, key)
+                    and value is not None
+                    and value != ""
+                    and key not in ["stoken", "bbs_uid"]
+                ):
+                    setattr(self, key, value)
+
+        else:
+            # 处理对象实例
+            for field in self.__annotations__:
+                if hasattr(cookies, field):
+                    value = getattr(cookies, field)
+                    if value is not None and value != "":
+                        setattr(self, field, value)
 
     def dict(
         self,
@@ -865,6 +882,17 @@ class ConfigDataManager:
         logger.info("🆕 创建默认配置对象")
         cls.config_data = ConfigData()
         cls._initialized = True
+
+    @classmethod
+    def save_config(cls):
+        """保存配置文件"""
+        if cls.config_data is None:
+            cls.load_config()
+        logger.info(f"正在保存配置文件...{project_config_path}")
+        # logger.debug(cls.config_data.model_dump())
+        with open(project_config_path, "w", encoding="utf-8") as f:
+            json.dump(cls.config_data.model_dump(), f, indent=4, ensure_ascii=False)
+        logger.info("✅ 配置文件保存成功")
 
     # 便捷访问方法 - 添加安全检查
     @classmethod

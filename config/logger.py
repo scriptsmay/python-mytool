@@ -1,48 +1,74 @@
+# logger.py
 import logging
 import sys
 from pathlib import Path
 from typing import Optional
 
+try:
+    import qrcode_terminal
+
+    QR_TERMINAL_AVAILABLE = True
+except ImportError:
+    QR_TERMINAL_AVAILABLE = False
+
+
+class CustomLogger(logging.Logger):
+    def success(self, msg, *args, **kwargs):
+        if self.isEnabledFor(logging.INFO):
+            self._log(logging.INFO, f"✅ {msg}", args, **kwargs)
+
+    def qr(self, data: str, description: str = ""):
+        """
+        使用qrcode-terminal打印二维码（更简单的实现）
+        """
+        if not QR_TERMINAL_AVAILABLE:
+            self.warning("QR code generation requires 'qrcode-terminal' package")
+            self.info(f"QR Data: {data}")
+            return
+
+        if description:
+            self.info(f"📱 QR Code - {description}")
+        else:
+            self.info("📱 QR Code")
+
+        self.info(f"Data: {data}")
+
+        # 直接调用qrcode-terminal输出到控制台
+        qrcode_terminal.draw(data)
+
+
+# 注册自定义logger类
+logging.setLoggerClass(CustomLogger)
+
+
 def setup_logger(
-    name: str = __name__,
+    name: str = "project",
     level: int = logging.INFO,
     log_file: Optional[Path] = None,
-    format_string: Optional[str] = None
-) -> logging.Logger:
-    """
-    设置并返回配置好的logger
-    
-    Args:
-        name: logger名称
-        level: 日志级别
-        log_file: 日志文件路径
-        format_string: 日志格式
-    """
-    if format_string is None:
-        format_string = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    
+    format_string: Optional[str] = None,
+) -> CustomLogger:
+
     logger = logging.getLogger(name)
-    logger.setLevel(level)
-    
-    # 避免重复添加handler
-    if logger.handlers:
-        return logger
-    
-    formatter = logging.Formatter(format_string)
-    
-    # 控制台handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
-    # 文件handler（如果指定了日志文件）
-    if log_file:
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file, encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-    
+
+    if not logger.handlers:
+        logger.setLevel(level)
+
+        if format_string is None:
+            format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+        formatter = logging.Formatter(format_string)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+        if log_file:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+
     return logger
 
-# 创建项目默认logger
-logger = setup_logger("python-mystool", level=logging.INFO)
+
+# 创建默认logger
+logger = setup_logger("mys-tool")
