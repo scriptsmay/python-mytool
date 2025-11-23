@@ -4,12 +4,13 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-try:
-    import qrcode_terminal
+# try:
+#     import pyqrcode
 
-    QR_TERMINAL_AVAILABLE = True
-except ImportError:
-    QR_TERMINAL_AVAILABLE = False
+#     QR_TERMINAL_AVAILABLE = True
+# except ImportError:
+#     QR_TERMINAL_AVAILABLE = False
+QR_TERMINAL_AVAILABLE = False
 
 
 class CustomLogger(logging.Logger):
@@ -33,8 +34,10 @@ class CustomLogger(logging.Logger):
 
         self.info(f"Data: {data}")
 
-        # 直接调用qrcode-terminal输出到控制台
-        qrcode_terminal.draw(data)
+        # 实际测试的时候，这个二维码由于太复杂，终端输出特别大会被截断，无法完全展示，
+        # 考虑还是改成推送图片消息的形式
+        # qr_data = pyqrcode.create(data)
+        # print(qr_data.terminal(quiet_zone=0))
 
 
 # 注册自定义logger类

@@ -2,7 +2,6 @@ import asyncio
 import json
 from typing import Union
 
-
 from services.common import (
     get_ltoken_by_stoken,
     get_cookie_token_by_stoken,
@@ -21,7 +20,7 @@ from models import (
     QueryGameTokenQrCodeStatus,
     GetCookieStatus,
 )
-from utils import logger, generate_device_id, generate_qr_img
+from utils import logger, generate_device_id, generate_qr_img, push, init_config
 
 
 async def mys_login():
@@ -37,14 +36,28 @@ async def mys_login():
     if fetch_qrcode_ret:
         qrcode_url, qrcode_ticket = fetch_qrcode_ret
         logger.info(f"等待扫描：{project_config.preference.qrcode_wait_time}秒")
-        # image_bytes = generate_qr_img(qrcode_url)
+        image_bytes = generate_qr_img(qrcode_url)
         try:
+            notice = "请注意！！！需要配置推送渠道！目前仅支持： 1、 telegram 2、 feishubot 配置了图片推送参数（ app_id 和 app_secret ）才会发送登录二维码！"
+            # 目前只有 telegram 和 feishubot 支持图片推送
+            if project_config.push_config.enable:
+                if (
+                    project_config.push_config.telegram.is_configured()
+                    or project_config.push_config.feishubot.is_configured()
+                ):
+                    notice = None
+                    push(
+                        push_message="请用米游社App扫描二维码进行登录",
+                        img_file=image_bytes,
+                        config=project_config.push_config,
+                    )
+            if notice:
+                logger.warning(notice)
             # 在终端打印二维码
-            logger.qr(qrcode_url, "请用米游社App扫描二维码进行登录")
-            # logger.info(msg_img)
+            # 这里最终没有使用终端打印二维码，是因为打印出来的二维码太大了没法扫描完整
+            # logger.qr(qrcode_url, "请用米游社App扫描二维码进行登录")
         except Exception as e:
             logger.exception("发送包含二维码的登录消息失败")
-            # message_box.append()
 
         # 2. 从二维码登录获取 GameToken
         qrcode_query_times = round(
@@ -62,6 +75,7 @@ async def mys_login():
                 break
             elif login_status.qrcode_expired:
                 logger.warning("⚠️二维码已过期，登录失败")
+                break
             elif not login_status:
                 await asyncio.sleep(project_config.preference.qrcode_query_interval)
                 continue
@@ -178,7 +192,7 @@ async def mys_login():
             notice_text += "网络连接失败！"
         else:
             notice_text += "未知错误！"
-        notice_text += " 如果部分步骤成功，你仍然可以尝试获取收货地址、兑换等功能"
+        # notice_text += " 如果部分步骤成功，你仍然可以尝试获取收货地址、兑换等功能"
         logger.error(notice_text)
 
         message_box.append(notice_text)

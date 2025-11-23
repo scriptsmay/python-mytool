@@ -381,10 +381,10 @@ async def single_weibo_sign(weibo_cookie: str) -> str:
                 status = "☑️ 已签到"
                 already_signed_count += 1
             elif is_sign and response:
-                status = "✅ 签到成功"
+                status = "✅ 成功"
                 signed_count += 1
             else:
-                status = "❌ 签到失败"
+                status = "❌ 失败"
 
             message = f"⚜️ [Lv.{level}] {name} {status}"
             messages.append(message)

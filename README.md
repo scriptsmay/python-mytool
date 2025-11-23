@@ -54,6 +54,8 @@ my_project/
 
 ### 依赖管理
 
+打开 `requirements.txt` 文件，将里面的内容复制到依赖管理中安装。
+
 python3 -> 创建依赖 -> 自动拆分 ✓ ：
 
 ```
@@ -64,4 +66,6 @@ pydantic
 tenacity
 pytz
 pydantic-settings
+bs4
+qrcode_terminal
 ```

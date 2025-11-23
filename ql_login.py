@@ -21,10 +21,10 @@ async def main():
 
     try:
         result = await mys_login()
-        if result:  # 签到成功
+        if result:
             ql_push("米游社登录", result)
 
-        logger.info(f"✅账户登录完成")
+        # logger.info(f"✅账户登录完成")
 
     except Exception as e:
         logger.error(f"❌任务执行失败: {e}")

@@ -36,6 +36,6 @@ if __name__ == "__main__":
     async def main():
         logger.info("🎮开始执行米游社登录...")
         await mys_login()
-        logger.info(f"✅米游社登录完成")
+        # logger.info(f"✅米游社登录完成")
 
     asyncio.run(main())

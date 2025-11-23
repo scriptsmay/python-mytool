@@ -440,6 +440,10 @@ class FeishuBotConfig(BaseModel):
     """飞书机器人推送配置"""
 
     webhook: Optional[str] = None
+    app_id: Optional[str] = None
+    app_secret: Optional[str] = None
+    # 群机器人发消息时可以 @指定用户
+    user_id: Optional[str] = None
 
     def is_configured(self) -> bool:
         return bool(self.webhook)
@@ -856,7 +860,7 @@ class ConfigDataManager:
                 with open(project_config_path, "r", encoding="utf-8") as f:
                     config_dict = json.load(f)
 
-                logger.info(f"读取到的配置数据: {config_dict}")
+                logger.debug(f"读取到的配置数据: {config_dict}")
 
                 # 使用宽松验证
                 cls.config_data = ConfigData.model_validate(config_dict)

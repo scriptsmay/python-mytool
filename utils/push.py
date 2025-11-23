@@ -3,22 +3,26 @@ import time
 import base64
 import urllib.parse
 import hashlib
+import requests
+
 from typing import Optional, Dict, Any, Union, List
 from dataclasses import dataclass, field
 from config.logger import logger
 from configparser import ConfigParser
 
+
 # 导入新的配置模型
 try:
     from models.data_models import PushConfig as NewPushConfig
-    from models.data_models import (
-        TelegramConfig,
-        DingRobotConfig,
-        FeishuBotConfig,
-        BarkConfig,
-        GotifyConfig,
-        WebhookConfig,
-    )
+
+    # from models.data_models import (
+    #     TelegramConfig,
+    #     DingRobotConfig,
+    #     FeishuBotConfig,
+    #     BarkConfig,
+    #     GotifyConfig,
+    #     WebhookConfig,
+    # )
 except ImportError:
     # 回退到旧的 dataclass
     @dataclass
@@ -36,7 +40,7 @@ except ImportError:
 
 
 # 推送标题默认
-DEFAULT_PUSH_TITLE = "「米忽悠工具」执行完成"
+DEFAULT_PUSH_TITLE = "「米忽悠工具」执行任务"
 
 # 支持的推送方式
 SUPPORTED_PUSH_METHODS = {
@@ -62,7 +66,7 @@ def get_new_session(**kwargs) -> Any:
             **kwargs,
         )
     except (ImportError, TypeError):
-        import requests
+
         from requests.adapters import HTTPAdapter
 
         session = requests.Session()
@@ -96,9 +100,32 @@ def get_new_session_use_proxy(http_proxy: str):
         return session
 
 
-def get_push_title(title: str) -> str:
-    """获取推送标题"""
-    return PUSH_TITLES.get(status_id, PUSH_TITLES.get(-2))
+def upload_image_to_feishu(image_bytes: bytes, app_id: str, app_secret: str):
+    """
+    第一步：上传图片到飞书并获得 image_key
+    """
+    # 获取 tenant_access_token
+    token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+    token_data = {"app_id": app_id, "app_secret": app_secret}
+    token_response = requests.post(token_url, json=token_data)
+    access_token = token_response.json()["tenant_access_token"]
+
+    # 上传图片
+    upload_url = "https://open.feishu.cn/open-apis/im/v1/images"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+    }
+    files = {"image": ("qrcode.png", image_bytes, "image/png")}
+    data = {"image_type": "message"}
+
+    upload_response = requests.post(upload_url, headers=headers, files=files, data=data)
+    result = upload_response.json()
+
+    if result["code"] == 0:
+        logger.info(f"图片上传成功: {result}")
+        return result["data"]["image_key"]
+    else:
+        raise Exception(f"图片上传失败: {result}")
 
 
 class PushHandler:
@@ -140,7 +167,7 @@ class PushHandler:
         service_configs = {
             "telegram": ["api_url", "bot_token", "chat_id", "http_proxy"],
             "dingrobot": ["webhook", "secret"],
-            "feishubot": ["webhook"],
+            "feishubot": ["webhook", "app_id", "app_secret", "user_id"],
             "bark": ["api_url", "token", "icon"],
             "gotify": ["api_url", "token", "priority"],
             "webhook": ["webhook_url"],
@@ -167,14 +194,6 @@ class PushHandler:
             if block_key:
                 result = result.replace(block_key, "*" * len(block_key))
         return result
-
-    def _prepare_message(self, title: str, push_message: str) -> str:
-        """准备消息内容"""
-        title = get_push_title(status_id)
-        message = f"{title}\n\n{push_message}"
-
-        logger.debug(f"准备发送的消息内容: {message}")
-        return message
 
     def _safe_log_error(self, service_name: str, exception: Exception):
         """安全地记录错误日志"""
@@ -260,7 +279,7 @@ class PushHandler:
         if img_file:
             url = f"https://{api_url}/bot{bot_token}/sendPhoto"
             files = {"photo": img_file}
-            data = {"chat_id": chat_id, "caption": title}
+            data = {"chat_id": chat_id, "caption": message}
             try:
                 return self._send_request("POST", url, data=data, files=files)
                 # logger.info("Telegram 图片推送成功")
@@ -325,16 +344,56 @@ class PushHandler:
             logger.warning("飞书机器人配置不完整")
             return False
 
-        message = push_message
         webhook_url = self._get_config_value(config, "webhook")
+        app_id = self._get_config_value(config, "app_id")
+        app_secret = self._get_config_value(config, "app_secret")
+        user_id = self._get_config_value(config, "user_id")
 
-        # TODO: img_file 暂不支持
+        # 构建内容块
+        content_blocks = []
+
+        # 1. 文字消息块
+        text_block = [{"tag": "text", "text": push_message}]
+        if user_id:
+            text_block.append({"tag": "at", "user_id": user_id})
+        content_blocks.append(text_block)
+
+        # 2. 图片块（如果有）
+        image_key = None
+        if img_file and app_id and app_secret:
+            try:
+                image_key = upload_image_to_feishu(img_file, app_id, app_secret)
+                if image_key:
+                    content_blocks.append(
+                        [
+                            {
+                                "tag": "img",
+                                "image_key": image_key,
+                                "alt": "二维码",
+                            }
+                        ]
+                    )
+            except Exception as e:
+                logger.warning(f"飞书图片上传失败，继续发送文字消息: {e}")
+
+        # 3. 构建消息
+        message_data = {
+            "msg_type": "post",
+            "content": {
+                "post": {
+                    "zh_cn": {
+                        "title": title,
+                        "content": content_blocks,
+                    }
+                }
+            },
+        }
 
         return self._send_request(
             "POST",
             url=webhook_url,
             headers={"Content-Type": "application/json; charset=utf-8"},
-            json={"msg_type": "text", "content": {"text": f"{title}\n{message}"}},
+            json=message_data,
         )
 
     def bark(
@@ -387,7 +446,7 @@ class PushHandler:
         priority = self._get_config_value(config, "priority", 5)
 
         prepare_json = {
-            "title": title,
+            "title": title or "默认标题",
             "priority": priority,
         }
 
@@ -427,7 +486,7 @@ class PushHandler:
 
     def push(
         self,
-        title: str = "",
+        title: str = "默认标题",
         push_message: str = "",
         img_file: Optional[bytes] = None,
         img_url: Optional[str] = None,
