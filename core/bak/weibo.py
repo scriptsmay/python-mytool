@@ -1,25 +1,130 @@
 import re
+import time
 import asyncio
 from typing import Dict, List, Optional, Any, Union
+from urllib.parse import urlencode
 
+import requests
 from bs4 import BeautifulSoup
 import urllib3
+import warnings
 
-# import warnings
-
-from utils import (
-    logger,
-    cookie_to_dict,
-    request_with_retry,
-    nested_lookup,
-    get_cookies,
-    run_task,
-)
+from utils import logger
 from models import project_config
-from config.task_logger import execute_task_with_logging, TaskResult, TaskLogger
 
 # 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def get_cookies(cookies: str) -> List[str]:
+    """解析cookies字符串为列表"""
+    if not cookies:
+        return []
+
+    if "#" in cookies:
+        return [cookie.strip() for cookie in cookies.split("#") if cookie.strip()]
+    elif isinstance(cookies, list):
+        return cookies
+    else:
+        return [cookie.strip() for cookie in cookies.splitlines() if cookie.strip()]
+
+
+def cookie_to_dict(cookie: str) -> Dict[str, str]:
+    """将cookie字符串转换为字典"""
+    if not cookie or "=" not in cookie:
+        return {}
+    return dict([line.strip().split("=", 1) for line in cookie.split(";")])
+
+
+def nested_lookup(
+    obj: Any, key: str, with_keys: bool = False, fetch_first: bool = False
+) -> Any:
+    """嵌套查找对象中的键值"""
+    result = list(_nested_lookup(obj, key, with_keys=with_keys))
+    if with_keys:
+        values = [v for k, v in _nested_lookup(obj, key, with_keys=with_keys)]
+        result = {key: values}
+    if fetch_first:
+        result = result[0] if result else result
+    return result
+
+
+def _nested_lookup(obj: Any, key: str, with_keys: bool = False):
+    """嵌套查找生成器"""
+    if isinstance(obj, list):
+        for item in obj:
+            yield from _nested_lookup(item, key, with_keys=with_keys)
+
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if key == k:
+                yield (k, v) if with_keys else v
+            if isinstance(v, (list, dict)):
+                yield from _nested_lookup(v, key, with_keys=with_keys)
+
+
+def request_with_retry(
+    *args, max_retries: int = 3, sleep_seconds: int = 5, **kwargs
+) -> requests.Response:
+    """带重试机制的请求函数"""
+    count = 0
+    while count <= max_retries:
+        try:
+            session = requests.Session()
+            # 确保禁用SSL验证
+            kwargs.setdefault("verify", False)
+            response = session.request(*args, **kwargs)
+            return response
+        except Exception as e:
+            count += 1
+            if count > max_retries:
+                logger.error(f"请求失败，已达最大重试次数: {e}")
+                raise e
+            logger.warning(
+                f"请求失败，{sleep_seconds}秒后重试 ({count}/{max_retries}): {e}"
+            )
+            time.sleep(sleep_seconds)
+
+
+async def run_task(name: str, cookies: List[str], task_func) -> List[Any]:
+    """运行任务的通用函数"""
+    if not cookies:
+        return [0, 0, f"🏆 {name}", "❌ 未配置cookie", ""]
+
+    success_count = 0
+    failure_count = 0
+    result_list = []
+
+    account_count = len(cookies)
+    account_str = "账号" if account_count == 1 else "账号"
+    logger.info(f"您配置了 {account_count} 个「{name}」{account_str}")
+
+    for i, cookie in enumerate(cookies, start=1):
+        logger.info(f"准备执行第 {i} 个账号的任务...")
+        try:
+            # 注意：这里需要await，因为task_func是异步的
+            raw_result = await task_func(cookie)
+            success_count += 1
+            result_str = str(raw_result)
+        except Exception as e:
+            logger.exception(f"第 {i} 个账号执行失败")
+            raw_result = f"执行失败: {e}"
+            failure_count += 1
+            result_str = str(raw_result)
+
+        result_fmt = f"🌈 第{i}个账号:\n{result_str}\n"
+        result_list.append(result_fmt)
+
+    task_name_fmt = f"🏆 {name}"
+    status_fmt = f"✅ 成功: {success_count} · ❌ 失败: {failure_count}"
+    message_box = [
+        success_count,
+        failure_count,
+        task_name_fmt,
+        status_fmt,
+        "\n".join(result_list),
+    ]
+    return message_box
 
 
 class WeiboSign:
@@ -276,10 +381,10 @@ async def single_weibo_sign(weibo_cookie: str) -> str:
                 status = "☑️ 已签到"
                 already_signed_count += 1
             elif is_sign and response:
-                status = "✅"
+                status = "✅ 成功"
                 signed_count += 1
             else:
-                status = "❌"
+                status = "❌ 失败"
 
             message = f"⚜️ [Lv.{level}] {name} {status}"
             messages.append(message)
@@ -296,65 +401,53 @@ async def single_weibo_sign(weibo_cookie: str) -> str:
         return error_msg
 
 
-async def _weibo_sign_impl() -> TaskResult:
-    """微博签到实现"""
+async def run_wb_task(cookies: str) -> str:
+    """运行微博任务的主函数"""
+    all_cookies = get_cookies(cookies)
 
-    async with TaskLogger("微博签到") as task_logger:
-        all_cookies = get_cookies(project_config.weibo_cookie)
+    if not all_cookies:
+        tip = "❌ 请先配置微博cookie环境变量或config.json文件!"
+        logger.warning(tip)
+        return tip
 
-        if not all_cookies:
-            task_logger.log_failure("未配置微博cookie环境变量或config.json文件")
-            return task_logger.get_result()
+    try:
+        # 运行微博任务
+        task_result = await run_task("微博超话签到", all_cookies, single_weibo_sign)
 
-        try:
-            # 运行微博任务
-            task_result = await run_task("微博超话签到", all_cookies, single_weibo_sign)
+        total_success_cnt = task_result[0]
+        total_failure_cnt = task_result[1]
+        task_name = task_result[2]
+        status_fmt = task_result[3]
+        message_content = task_result[4]
 
-            total_success_cnt = task_result[0]
-            total_failure_cnt = task_result[1]
-            task_name = task_result[2]
-            status_fmt = task_result[3]
-            message_content = task_result[4]
+        if total_success_cnt == 0 and total_failure_cnt == 0:
+            return "❌ 没有有效的微博账号配置"
 
-            if total_success_cnt == 0 and total_failure_cnt == 0:
-                task_logger.log_warning("没有有效的微博账号配置")
-                return task_logger.get_result()
+        title = f"{task_name} - {status_fmt}"
+        content = f"{title}\n\n{message_content}"
 
-            # 记录统计信息
-            if total_success_cnt > 0:
-                task_logger.log_success(f"成功签到 {total_success_cnt} 个账号")
-            if total_failure_cnt > 0:
-                task_logger.log_failure(f"失败 {total_failure_cnt} 个账号")
+        logger.info(f"微博任务完成: {status_fmt}")
+        return content
 
-            title = f"{task_name} - {status_fmt}"
-            content = f"{title}\n\n{message_content}"
-
-            task_logger.log_info(f"微博任务完成: {status_fmt}")
-
-            result = task_logger.get_result()
-            result.message = content  # 使用详细的消息内容
-
-            return result
-
-        except Exception as e:
-            task_logger.log_failure(f"微博任务执行失败: {e}")
-            return task_logger.get_result()
+    except Exception as e:
+        error_msg = f"❌ 微博任务执行失败: {e}"
+        logger.error(error_msg)
+        return error_msg
 
 
-async def manually_weibo_sign() -> TaskResult:
+async def manually_weibo_sign() -> str:
     """手动执行微博签到的入口函数（与其他模块保持一致）"""
 
-    return await execute_task_with_logging("微博签到", _weibo_sign_impl)
-    # return await run_wb_task(project_config.weibo_cookie)
+    return await run_wb_task(project_config.weibo_cookie)
 
 
-# 测试单个cookie使用
+# 保留原有使用方式供兼容
 if __name__ == "__main__":
     # 示例用法
     cookie = "your_weibo_cookie_here"
 
     async def main():
-        result = await single_weibo_sign(cookie)
+        result = await run_wb_task(cookie)
         print(result)
 
     asyncio.run(main())

@@ -25,17 +25,22 @@ except Exception as e:
 
 async def mys_login_task():
     """米游社登录"""
-    message = await mys_login()
-    if message:
-        push(title="米游社登录", push_message=message)
-    return message
+
+    # logger.info("🎮开始执行米游社登录...")
+    task_result = await mys_login()
+    is_success = task_result.is_success()
+    if is_success:
+        push(title="米游社登录成功", push_message=task_result.message)
+    else:
+        push(title="米游社登录失败", push_message=task_result.message)
+
+    return task_result.message
 
 
 if __name__ == "__main__":
 
     async def main():
-        logger.info("🎮开始执行米游社登录...")
-        await mys_login()
-        # logger.info(f"✅米游社登录完成")
+
+        await mys_login_task()
 
     asyncio.run(main())

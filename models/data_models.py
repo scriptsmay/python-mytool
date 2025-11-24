@@ -765,8 +765,10 @@ class UserAccount(BaseModelWithSetter):
         "ZenlessZoneZero",
     ]
     mission_games: List[str] = ["BBSMission"]
-    user_stamina_threshold: int = 240
+    user_stamina_threshold: int = 300
+    """开拓力提醒阈值"""
     user_resin_threshold: int = 200
+    """树脂提醒阈值"""
 
     def __init__(self, **data: Any):
         # from utils import generate_device_id

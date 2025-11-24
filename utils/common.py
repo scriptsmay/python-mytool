@@ -9,9 +9,10 @@ import time
 import uuid
 from copy import deepcopy
 from pathlib import Path
-from typing import Dict, Literal, Union, Optional, Tuple, Iterable, List
+from typing import Dict, Literal, Union, Optional, Tuple, Iterable, List, Any
 from urllib.parse import urlencode
 
+import requests
 import httpx
 import tenacity
 
@@ -28,7 +29,6 @@ from models import (
 )
 
 __all__ = [
-    "logger",
     "custom_attempt_times",
     "get_async_retry",
     "generate_device_id",
@@ -42,8 +42,126 @@ __all__ = [
     "blur_phone",
     "generate_qr_img",
     "get_unique_users",
-    "logger",
+    "get_cookies",
+    "cookie_to_dict",
+    "nested_lookup",
+    "request_with_retry",
+    "run_task",
 ]
+
+
+def get_cookies(cookies: str) -> List[str]:
+    """解析cookies字符串为列表"""
+    if not cookies:
+        return []
+
+    if "#" in cookies:
+        return [cookie.strip() for cookie in cookies.split("#") if cookie.strip()]
+    elif isinstance(cookies, list):
+        return cookies
+    else:
+        return [cookie.strip() for cookie in cookies.splitlines() if cookie.strip()]
+
+
+def cookie_to_dict(cookie: str) -> Dict[str, str]:
+    """将cookie字符串转换为字典"""
+    if not cookie or "=" not in cookie:
+        return {}
+    return dict([line.strip().split("=", 1) for line in cookie.split(";")])
+
+
+def nested_lookup(
+    obj: Any, key: str, with_keys: bool = False, fetch_first: bool = False
+) -> Any:
+    """嵌套查找对象中的键值"""
+    result = list(_nested_lookup(obj, key, with_keys=with_keys))
+    if with_keys:
+        values = [v for k, v in _nested_lookup(obj, key, with_keys=with_keys)]
+        result = {key: values}
+    if fetch_first:
+        result = result[0] if result else result
+    return result
+
+
+def _nested_lookup(obj: Any, key: str, with_keys: bool = False):
+    """嵌套查找生成器"""
+    if isinstance(obj, list):
+        for item in obj:
+            yield from _nested_lookup(item, key, with_keys=with_keys)
+
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if key == k:
+                yield (k, v) if with_keys else v
+            if isinstance(v, (list, dict)):
+                yield from _nested_lookup(v, key, with_keys=with_keys)
+
+
+def request_with_retry(
+    *args,
+    max_retries: int = project_config.preference.max_retry_times,
+    sleep_seconds: int = 5,
+    **kwargs,
+) -> requests.Response:
+    """带重试机制的请求函数"""
+    count = 0
+    while count <= max_retries:
+        try:
+            session = requests.Session()
+            # 确保禁用SSL验证
+            kwargs.setdefault("verify", False)
+            response = session.request(*args, **kwargs)
+            return response
+        except Exception as e:
+            count += 1
+            if count > max_retries:
+                logger.error(f"请求失败，已达最大重试次数: {e}")
+                raise e
+            logger.warning(
+                f"请求失败，{sleep_seconds}秒后重试 ({count}/{max_retries}): {e}"
+            )
+            time.sleep(sleep_seconds)
+
+
+async def run_task(name: str, cookies: List[str], task_func) -> List[Any]:
+    """运行任务的通用函数"""
+    if not cookies:
+        return [0, 0, f"🏆 {name}", "❌ 未配置cookie", ""]
+
+    success_count = 0
+    failure_count = 0
+    result_list = []
+
+    account_count = len(cookies)
+    account_str = "账号" if account_count == 1 else "账号"
+    logger.info(f"您配置了 {account_count} 个「{name}」{account_str}")
+
+    for i, cookie in enumerate(cookies, start=1):
+        logger.info(f"准备执行第 {i} 个账号的任务...")
+        try:
+            # 注意：这里需要await，因为task_func是异步的
+            raw_result = await task_func(cookie)
+            success_count += 1
+            result_str = str(raw_result)
+        except Exception as e:
+            logger.exception(f"第 {i} 个账号执行失败")
+            raw_result = f"执行失败: {e}"
+            failure_count += 1
+            result_str = str(raw_result)
+
+        result_fmt = f"🌈 第{i}个账号:\n{result_str}\n"
+        result_list.append(result_fmt)
+
+    task_name_fmt = f"🏆 {name}"
+    status_fmt = f"✅ 成功: {success_count} · ❌ 失败: {failure_count}"
+    message_box = [
+        success_count,
+        failure_count,
+        task_name_fmt,
+        status_fmt,
+        "\n".join(result_list),
+    ]
+    return message_box
 
 
 def custom_attempt_times(retry: bool):

@@ -23,7 +23,7 @@ async def main():
         bbs_result = await manually_bbs_sign()
         if bbs_result:
             ql_push("米游社任务", bbs_result)
-        logger.info(f"✅米游社任务完成: {bbs_result}")
+        logger.info(f"✅米游社任务执行结束")
 
     except Exception as e:
         logger.error(f"❌任务执行失败: {e}")

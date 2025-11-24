@@ -21,8 +21,10 @@ async def main():
 
     try:
         result = await mys_login()
-        if result:
-            ql_push("米游社登录", result)
+        if result.is_success:
+            ql_push("米游社登录成功", result.message)
+        else:
+            ql_push("米游社登录失败", result.message)
 
         # logger.info(f"✅账户登录完成")
 

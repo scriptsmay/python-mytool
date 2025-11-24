@@ -1,0 +1,9 @@
+httpx
+requests
+qrcode
+pydantic
+tenacity
+pytz
+pydantic-settings
+bs4
+pyqrcode
