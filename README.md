@@ -60,12 +60,10 @@ python3 -> 创建依赖 -> 自动拆分 ✓ ：
 
 ```
 httpx
-requests
 qrcode
 pydantic
 tenacity
 pytz
 pydantic-settings
 bs4
-qrcode_terminal
 ```

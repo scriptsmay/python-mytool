@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, Literal, Union, Optional, Tuple, Iterable, List, Any
 from urllib.parse import urlencode
 
-import requests
 import httpx
 import tenacity
 
@@ -102,16 +101,29 @@ def request_with_retry(
     max_retries: int = project_config.preference.max_retry_times,
     sleep_seconds: int = 5,
     **kwargs,
-) -> requests.Response:
-    """带重试机制的请求函数"""
+) -> httpx.Response:
+    """同步版本的带重试机制的请求函数"""
     count = 0
+
+    # 提取 httpx.Client 的配置参数
+    client_kwargs = {
+        "verify": kwargs.pop("verify", False),  # 禁用SSL验证
+        "timeout": kwargs.pop("timeout", 30),  # 超时时间
+        "follow_redirects": kwargs.pop("follow_redirects", True),  # 跟随重定向
+    }
+
     while count <= max_retries:
         try:
-            session = requests.Session()
-            # 确保禁用SSL验证
-            kwargs.setdefault("verify", False)
-            response = session.request(*args, **kwargs)
-            return response
+            with httpx.Client(**client_kwargs) as client:
+                response = client.request(*args, **kwargs)
+                if response.status_code >= 500:
+                    raise httpx.HTTPStatusError(
+                        f"服务器错误: {response.status_code}",
+                        request=response.request,
+                        response=response,
+                    )
+                return response
+
         except Exception as e:
             count += 1
             if count > max_retries:

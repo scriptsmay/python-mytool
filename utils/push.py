@@ -53,7 +53,6 @@ SUPPORTED_PUSH_METHODS = {
 }
 
 
-# HTTP 客户端相关函数保持不变
 def get_new_session(**kwargs) -> Any:
     """创建 HTTP 客户端实例"""
     try:
@@ -496,7 +495,7 @@ class PushHandler:
 
         # 检查推送条件
         if not self.config.enable:
-            logger.info("推送功能已禁用")
+            logger.warning("❗️推送功能已禁用")
             return True
 
         processed_message = self._msg_replace(push_message)

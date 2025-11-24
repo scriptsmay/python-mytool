@@ -32,6 +32,5 @@ if __name__ == "__main__":
     async def main():
         logger.info("🎮开始执行微博超话签到...")
         await weibo_sign_task()
-        logger.info(f"✅微博超话签到完成")
 
     asyncio.run(main())

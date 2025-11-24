@@ -344,8 +344,7 @@ async def _weibo_sign_impl() -> TaskResult:
 async def manually_weibo_sign() -> TaskResult:
     """手动执行微博签到的入口函数（与其他模块保持一致）"""
 
-    return await execute_task_with_logging("微博签到", _weibo_sign_impl)
-    # return await run_wb_task(project_config.weibo_cookie)
+    return await _weibo_sign_impl()
 
 
 # 测试单个cookie使用
