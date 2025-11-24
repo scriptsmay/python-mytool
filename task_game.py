@@ -22,6 +22,8 @@ async def game_sign():
         logger.error(f"❌初始化推送配置失败：{e}")
         print(f"❌初始化推送配置失败：{e}")
 
+    return result
+
 
 if __name__ == "__main__":
     """单独运行游戏签到"""
