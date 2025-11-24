@@ -866,12 +866,10 @@ class ConfigDataManager:
 
                 # 使用宽松验证
                 cls.config_data = ConfigData.model_validate(config_dict)
-                logger.info("✅ 配置文件加载成功")
                 cls._initialized = True
 
             except ValidationError as e:
                 logger.warning(f"配置文件验证失败: {e}")
-                # 不再尝试修复和保存，直接使用默认配置
                 cls._create_default_config()
             except Exception as e:
                 logger.exception(f"读取配置文件失败: {e}")
@@ -896,7 +894,6 @@ class ConfigDataManager:
         if cls.config_data is None:
             cls.load_config()
         logger.info(f"正在保存配置文件...{project_config_path}")
-        # logger.debug(cls.config_data.model_dump())
         with open(project_config_path, "w", encoding="utf-8") as f:
             json.dump(cls.config_data.model_dump(), f, indent=4, ensure_ascii=False)
         logger.info("✅ 配置文件保存成功")
