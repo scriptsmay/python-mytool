@@ -496,6 +496,7 @@ class PushHandler:
         # 检查推送条件
         if not self.config.enable:
             logger.warning("❗️推送功能已禁用")
+            logger.info(f"打印推送内容:\n{title}\n{push_message}")
             return True
 
         processed_message = self._msg_replace(push_message)

@@ -83,13 +83,13 @@ async def common_task_run(task_name: str, task_func) -> TaskResult:
 
 async def manually_game_sign() -> TaskResult:
     """进行游戏签到"""
-    return await common_task_run("游戏签到", perform_game_sign)
+    return await common_task_run("游戏签到", _game_sign_impl)
 
 
 async def manually_bbs_sign() -> TaskResult:
     """执行米游币任务"""
 
-    return await common_task_run("米游币任务", perform_bbs_sign)
+    return await common_task_run("米游币任务", _bbs_sign_impl)
 
 
 async def manually_genshin_note_check() -> TaskResult:
@@ -129,7 +129,7 @@ def _format_result(msgs_list: List[str], task_name: str) -> str:
         return "无记录"
 
 
-async def perform_game_sign(user: UserData) -> str:
+async def _game_sign_impl(user: UserData) -> str:
     """
     执行游戏签到
 
@@ -304,9 +304,7 @@ async def _process_sign_result(
     await asyncio.sleep(project_config.preference.sleep_time)
 
 
-async def perform_bbs_sign(
-    user: UserData, msgs_list: List[str], account_index: int = None
-) -> str:
+async def _bbs_sign_impl(user: UserData) -> str:
     """
     执行米游币任务
 
