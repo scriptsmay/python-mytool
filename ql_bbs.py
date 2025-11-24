@@ -21,8 +21,8 @@ async def main():
     try:
 
         bbs_result = await manually_bbs_sign()
-        if bbs_result:
-            ql_push("米游社任务", bbs_result)
+        if bbs_result.is_success:
+            ql_push("米游社任务", bbs_result.message)
         logger.info(f"✅米游社任务执行结束")
 
     except Exception as e:

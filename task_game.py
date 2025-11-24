@@ -12,16 +12,15 @@ from config import logger
 
 async def game_sign():
     """游戏签到主函数"""
-    message = await manually_game_sign()
+    result = await manually_game_sign()
     try:
         from models import project_config
 
         init_config(project_config.push_config)
-        push(title="米忽悠游戏签到任务", push_message=message)
+        push(title="米忽悠游戏签到任务", push_message=result.message)
     except Exception as e:
         logger.error(f"❌初始化推送配置失败：{e}")
         print(f"❌初始化推送配置失败：{e}")
-    return message
 
 
 if __name__ == "__main__":

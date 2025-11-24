@@ -22,8 +22,8 @@ async def main():
 
     try:
         game_result = await manually_game_sign()
-        if game_result:  # 签到成功
-            ql_push("米哈游游戏签到成功", game_result)
+        if game_result.is_success:  # 签到成功
+            ql_push("米哈游游戏签到成功", game_result.message)
 
         logger.info(f"✅游戏签到完成")
 

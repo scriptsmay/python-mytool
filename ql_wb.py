@@ -23,8 +23,8 @@ async def main():
     # 顺序执行游戏签到和社区签到
     try:
         result = await manually_weibo_sign()
-        if result:
-            ql_push("微博超话签到", result)
+        if result.is_success:
+            ql_push("微博超话签到", result.message)
         logger.info(f"✅微博超话签到完成")
 
     except Exception as e:

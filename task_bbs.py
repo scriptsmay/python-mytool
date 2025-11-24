@@ -12,12 +12,12 @@ from config import logger
 
 async def bbs_sign_task():
     logger.info("🏠开始执行社区签到...")
-    message = await manually_bbs_sign()
+    result = await manually_bbs_sign()
     try:
         from models import project_config
 
         init_config(project_config.push_config)
-        push("米哈游社区签到", push_message=message)
+        push("米哈游社区签到", push_message=result.message)
     except Exception as e:
         logger.error(f"❌初始化推送配置失败：{e}")
         print(f"❌初始化推送配置失败：{e}")

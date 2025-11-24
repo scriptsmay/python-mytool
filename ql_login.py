@@ -21,11 +21,6 @@ except (ImportError, NameError) as e:
     exit(-1)
 
 
-async def handle_login_success(message: str):
-    """处理登录成功的逻辑"""
-    ql_push(SUCCESS_TITLE, message)
-
-
 async def handle_login_failure(error):
     """处理登录失败的逻辑"""
     error_msg = f"执行过程中出现错误: {error}"
@@ -38,7 +33,7 @@ async def main_login_task():
     try:
         result = await mys_login()
         if result.is_success:
-            await handle_login_success(result.message)
+            await ql_push(SUCCESS_TITLE, result.message)
     except Exception as e:
         await handle_login_failure(e)
         raise
