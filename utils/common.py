@@ -123,24 +123,43 @@ def request_with_retry(
             time.sleep(sleep_seconds)
 
 
-async def run_task(name: str, cookies: List[str], task_func) -> List[Any]:
-    """运行任务的通用函数"""
-    if not cookies:
-        return [0, 0, f"🏆 {name}", "❌ 未配置cookie", ""]
+async def run_task(
+    name: str, data_list: List[Union[str, UserData, Tuple[str, UserData]]], task_func
+) -> List[Any]:
+    """
+    执行任务的通用函数
+
+    Args:
+        name: 任务名称
+        data_list: 数据列表，可以是字符串、UserData对象或(user_id, user_data)元组
+        task_func: 要执行的任务函数
+
+    Returns:
+        执行结果列表
+    """
+    if not data_list:
+        return [0, 0, f"🏆 {name}", "❌ 未配置数据", ""]
 
     success_count = 0
     failure_count = 0
     result_list = []
 
-    account_count = len(cookies)
+    account_count = len(data_list)
     account_str = "账号" if account_count == 1 else "账号"
     logger.info(f"您配置了 {account_count} 个「{name}」{account_str}")
 
-    for i, cookie in enumerate(cookies, start=1):
+    for i, data in enumerate(data_list, start=1):
         logger.info(f"准备执行第 {i} 个账号的任务...")
         try:
-            # 注意：这里需要await，因为task_func是异步的
-            raw_result = await task_func(cookie)
+            # 根据数据类型处理
+            if isinstance(data, tuple) and len(data) == 2:
+                # 如果是元组，解包为 (user_id, user_data)
+                user_id, user_data = data
+                raw_result = await task_func(user_data)  # 只传递 user_data
+            else:
+                # 如果是其他类型，直接传递
+                raw_result = await task_func(data)
+
             success_count += 1
             result_str = str(raw_result)
         except Exception as e:
