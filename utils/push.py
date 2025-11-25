@@ -121,10 +121,10 @@ def upload_image_to_feishu(image_bytes: bytes, app_id: str, app_secret: str):
     result = upload_response.json()
 
     if result["code"] == 0:
-        logger.info(f"图片上传成功: {result["data"]}")
+        logger.info(f"feishubot 图片上传成功: {result}")
         return result["data"]["image_key"]
     else:
-        raise Exception(f"图片上传失败: {result}")
+        raise Exception(f"feishubot 图片上传失败: {result}")
 
 
 class PushHandler:
