@@ -8,7 +8,6 @@ import requests
 from typing import Optional, Dict, Any, Union, List
 from dataclasses import dataclass, field
 from config.logger import logger
-from configparser import ConfigParser
 
 from utils.img_upload import upload_image
 
@@ -32,14 +31,22 @@ except ImportError:
     class NewPushConfig:
         enable: bool = True
         error_push_only: bool = False
+        # time
+        timeout: float = 15.0
+        max_retry_times: int = 3
+        retry_interval: float = 2.0
+
         push_servers: List[str] = field(default_factory=list)
         push_block_keys: List[str] = field(default_factory=list)
+
+        # push servers
         telegram: Any = field(default_factory=dict)
         dingrobot: Any = field(default_factory=dict)
         feishubot: Any = field(default_factory=dict)
         bark: Any = field(default_factory=dict)
         gotify: Any = field(default_factory=dict)
         webhook: Any = field(default_factory=dict)
+        imgbed: Any = field(default_factory=dict)
 
 
 # 推送标题默认
@@ -92,7 +99,7 @@ def get_new_session_use_proxy(http_proxy: str):
     """根据代理创建 Session"""
     proxies_dict = {
         "http://": f"http://{http_proxy}",
-        "https://": f"http://{http_proxy}",
+        "https://": f"https://{http_proxy}",  # 修改此处为 https 协议
     }
     if is_module_available("httpx"):
         return get_new_session(proxies=proxies_dict)
@@ -102,14 +109,14 @@ def get_new_session_use_proxy(http_proxy: str):
         return session
 
 
-def upload_image_to_feishu(image_bytes: bytes, app_id: str, app_secret: str):
+def upload_image_to_feishu(image_bytes: bytes, app_id: str, app_secret: str, session):
     """
     第一步：上传图片到飞书并获得 image_key
     """
     # 获取 tenant_access_token
     token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
     token_data = {"app_id": app_id, "app_secret": app_secret}
-    token_response = requests.post(token_url, json=token_data)
+    token_response = session.post(token_url, json=token_data)
     access_token = token_response.json()["tenant_access_token"]
 
     # 上传图片
@@ -120,40 +127,14 @@ def upload_image_to_feishu(image_bytes: bytes, app_id: str, app_secret: str):
     files = {"image": ("qrcode.png", image_bytes, "image/png")}
     data = {"image_type": "message"}
 
-    upload_response = requests.post(upload_url, headers=headers, files=files, data=data)
+    upload_response = session.post(upload_url, headers=headers, files=files, data=data)
     result = upload_response.json()
 
     if result["code"] == 0:
-        logger.info(f"feishubot 图片上传成功: {result}")
+        logger.info("feishubot 图片上传成功")
         return result["data"]["image_key"]
     else:
         raise Exception(f"feishubot 图片上传失败: {result}")
-
-
-def upload_image_to_imgbed(
-    image_bytes: bytes,
-    api_url: str = "",
-    token: str = "",
-) -> Dict[str, Any]:
-    """
-    上传图片到图床，并返回图片地址
-
-    :param image_bytes: 二进制图片数据
-    :type image_bytes: bytes
-    :param api_url: 图床API地址
-    :type api_url: str
-    :param token: 图床API token
-    :type token: str
-    :return: 上传成功则返回图片地址，失败则返回None
-    :rtype: Dict[str, Any]
-    """
-    result = upload_image(image_bytes, api_url=api_url, token=token)
-    if result["success"]:
-        result_url = result["data"]["url"]
-        print(f"图片URL: {result_url}")
-        return result_url
-
-    return None
 
 
 class PushHandler:
@@ -182,9 +163,22 @@ class PushHandler:
     def _safe_log_error(self, service_name: str, exception: Exception):
         """安全地记录错误日志"""
         error_msg = str(exception)
-        for sensitive in ["token=", "secret=", "key=", "password="]:
-            if sensitive in error_msg:
-                error_msg = error_msg.split(sensitive)[0] + f"{sensitive}***"
+        sensitive_keywords = [
+            "token=",
+            "secret=",
+            "key=",
+            "password=",
+            "access_token",
+            "auth_token",
+            "authorization",
+        ]
+        for keyword in sensitive_keywords:
+            if keyword in error_msg:
+                idx = error_msg.find(keyword) + len(keyword)
+                end_idx = error_msg.find("&", idx)
+                if end_idx == -1:
+                    end_idx = len(error_msg)
+                error_msg = error_msg[:idx] + "***" + error_msg[end_idx:]
         logger.error(f"{service_name} 推送失败: {error_msg}")
 
     def _get_config_value(self, config_obj, key, default=None):
@@ -216,6 +210,36 @@ class PushHandler:
         except Exception as e:
             self._safe_log_error("HTTP请求", e)
             return False
+
+    def upload_image_to_imgbed(
+        self,
+        image_bytes: bytes,
+    ) -> Optional[str]:
+        """
+        上传图片到图床，并返回图片地址
+
+        :param image_bytes: 二进制图片数据
+        :type image_bytes: bytes
+        :return: 上传成功则返回图片地址，失败则返回None
+        :rtype: Optional[str]
+        """
+        if not self._is_config_configured(self.config, ["imgbed"]):
+            logger.warning("图床配置不完整")
+            return None
+
+        result = upload_image(
+            image_bytes,
+            api_url=self.config.imgbed.api_url,
+            token=self.config.imgbed.token,
+            max_retries=self.config.max_retry_times,
+            retry_delay=self.config.retry_interval,
+        )
+        if result["success"]:
+            result_url = result["data"]["url"]
+            print(f"图片URL: {result_url}")
+            return result_url
+
+        return None
 
     def check_telegram_connectivity(self) -> bool:
         """检查 Telegram API 连通性"""
@@ -343,7 +367,9 @@ class PushHandler:
         image_key = None
         if img_file and app_id and app_secret:
             try:
-                image_key = upload_image_to_feishu(img_file, app_id, app_secret)
+                image_key = upload_image_to_feishu(
+                    img_file, app_id, app_secret, self.http
+                )
                 if image_key:
                     content_blocks.append(
                         [
@@ -432,11 +458,7 @@ class PushHandler:
         # 增加图床上传部分
         # 由于 gotify 不支持 base64 编码的文本方式，因此考虑改成oss外链
         if img_file:
-            img_remote_url = upload_image_to_imgbed(
-                img_file,
-                api_url=self.config.imgbed.api_url,
-                token=self.config.imgbed.token,
-            )
+            img_remote_url = self.upload_image_to_imgbed(img_file)
             if img_remote_url:
                 message = f"{message}\n\n![图片]({img_remote_url})"
                 # 添加 markdown 样式
