@@ -3,7 +3,7 @@ import time
 import base64
 import urllib.parse
 import hashlib
-import requests
+import httpx
 
 from typing import Optional, Dict, Any, Union, List
 from dataclasses import dataclass, field
@@ -63,78 +63,16 @@ SUPPORTED_PUSH_METHODS = {
 }
 
 
-def get_new_session(**kwargs) -> Any:
+def get_new_session(**kwargs) -> httpx.Client:
     """创建 HTTP 客户端实例"""
-    try:
-        import httpx
+    import httpx
 
-        return httpx.Client(
-            timeout=30,
-            transport=httpx.HTTPTransport(retries=3),
-            follow_redirects=True,
-            **kwargs,
-        )
-    except (ImportError, TypeError):
-
-        from requests.adapters import HTTPAdapter
-
-        session = requests.Session()
-        session.mount("http://", HTTPAdapter(max_retries=3))
-        session.mount("https://", HTTPAdapter(max_retries=3))
-        if "proxies" in kwargs:
-            session.proxies.update(kwargs["proxies"])
-        return session
-
-
-def is_module_available(module_name: str) -> bool:
-    """检查模块是否可用"""
-    try:
-        __import__(module_name)
-        return True
-    except ImportError:
-        return False
-
-
-def get_new_session_use_proxy(http_proxy: str):
-    """根据代理创建 Session"""
-    proxies_dict = {
-        "http://": f"http://{http_proxy}",
-        "https://": f"https://{http_proxy}",  # 修改此处为 https 协议
-    }
-    if is_module_available("httpx"):
-        return get_new_session(proxies=proxies_dict)
-    else:
-        session = get_new_session()
-        session.proxies = proxies_dict
-        return session
-
-
-def upload_image_to_feishu(image_bytes: bytes, app_id: str, app_secret: str, session):
-    """
-    第一步：上传图片到飞书并获得 image_key
-    """
-    # 获取 tenant_access_token
-    token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-    token_data = {"app_id": app_id, "app_secret": app_secret}
-    token_response = session.post(token_url, json=token_data)
-    access_token = token_response.json()["tenant_access_token"]
-
-    # 上传图片
-    upload_url = "https://open.feishu.cn/open-apis/im/v1/images"
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-    }
-    files = {"image": ("qrcode.png", image_bytes, "image/png")}
-    data = {"image_type": "message"}
-
-    upload_response = session.post(upload_url, headers=headers, files=files, data=data)
-    result = upload_response.json()
-
-    if result["code"] == 0:
-        logger.info("feishubot 图片上传成功")
-        return result["data"]["image_key"]
-    else:
-        raise Exception(f"feishubot 图片上传失败: {result}")
+    return httpx.Client(
+        timeout=30,
+        transport=httpx.HTTPTransport(retries=3),
+        follow_redirects=True,
+        **kwargs,
+    )
 
 
 class PushHandler:
@@ -202,9 +140,9 @@ class PushHandler:
         try:
             session = self.http
             if method.upper() == "GET":
-                response = session.get(url, timeout=30, **kwargs)
+                response = session.get(url, **kwargs)
             else:
-                response = session.post(url, timeout=30, **kwargs)
+                response = session.post(url, **kwargs)
             response.raise_for_status()
             return True
         except Exception as e:
@@ -223,14 +161,18 @@ class PushHandler:
         :return: 上传成功则返回图片地址，失败则返回None
         :rtype: Optional[str]
         """
-        if not self._is_config_configured(self.config, ["imgbed"]):
+
+        if not self._is_config_configured(self.config.imgbed, ["api_url", "token"]):
             logger.warning("图床配置不完整")
             return None
 
+        api_url = self._get_config_value(self.config.imgbed, "api_url")
+        token = self._get_config_value(self.config.imgbed, "token")
+
         result = upload_image(
             image_bytes,
-            api_url=self.config.imgbed.api_url,
-            token=self.config.imgbed.token,
+            api_url=api_url,
+            token=token,
             max_retries=self.config.max_retry_times,
             retry_delay=self.config.retry_interval,
         )
@@ -238,6 +180,54 @@ class PushHandler:
             result_url = result["data"]["url"]
             print(f"图片URL: {result_url}")
             return result_url
+
+        return None
+
+    def upload_image_to_feishu(self, image_bytes: bytes) -> Optional[str]:
+        """
+        第一步：上传图片到飞书并获得 image_key
+        """
+        session = self.http
+
+        if not self._is_config_configured(
+            self.config.feishubot, ["app_id", "app_secret"]
+        ):
+            logger.warning("飞书配置 app_id 和 app_secret 不完整")
+            return None
+
+        app_id = self._get_config_value(self.config.feishubot, "app_id")
+        app_secret = self._get_config_value(self.config.feishubot, "app_secret")
+
+        # 获取 tenant_access_token
+        token_url = (
+            "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
+        )
+        token_data = {
+            "app_id": app_id,
+            "app_secret": app_secret,
+        }
+        token_response = session.post(token_url, json=token_data)
+        access_token = token_response.json()["tenant_access_token"]
+
+        # 上传图片
+        upload_url = "https://open.feishu.cn/open-apis/im/v1/images"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+        }
+
+        files = {"image": ("qrcode.png", image_bytes, "image/png")}
+        data = {"image_type": "message"}
+
+        upload_response = session.post(
+            upload_url, headers=headers, files=files, data=data
+        )
+        result = upload_response.json()
+
+        if result["code"] == 0:
+            logger.info("feishubot 图片上传成功")
+            return result["data"]["image_key"]
+        else:
+            raise Exception(f"feishubot 图片上传失败: {result}")
 
         return None
 
@@ -367,9 +357,7 @@ class PushHandler:
         image_key = None
         if img_file and app_id and app_secret:
             try:
-                image_key = upload_image_to_feishu(
-                    img_file, app_id, app_secret, self.http
-                )
+                image_key = self.upload_image_to_feishu(img_file)
                 if image_key:
                     content_blocks.append(
                         [
