@@ -34,14 +34,13 @@ def main_run():
         # 看看读取图片大小
         logger.info(f"图片大小：{len(img_file)}")
 
-    img_url = "https://gotify.net/img/logo.png"
+    # img_url = "https://gotify.net/img/logo.png"
 
     logger.info("⏳开始测试消息推送配置...")
     local_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
     push(
         push_message=f"✅测试消息推送\n{local_time}",
         img_file=img_file,
-        img_url=img_url,
     )
 
 

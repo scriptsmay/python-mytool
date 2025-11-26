@@ -491,6 +491,18 @@ class WebhookConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
+class ImageBedConfig(BaseModel):
+    """图床配置"""
+
+    api_url: Optional[str] = None
+    token: Optional[str] = None
+
+    def is_configured(self) -> bool:
+        return bool(self.api_url)
+
+    model_config = ConfigDict(extra="ignore")
+
+
 class PushConfig(BaseModel):
     """推送配置"""
 
@@ -508,6 +520,9 @@ class PushConfig(BaseModel):
     bark: BarkConfig = BarkConfig()
     gotify: GotifyConfig = GotifyConfig()
     webhook: WebhookConfig = WebhookConfig()
+
+    # 图床配置
+    imgbed: ImageBedConfig = ImageBedConfig()
 
     model_config = ConfigDict(extra="ignore")
 

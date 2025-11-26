@@ -10,19 +10,22 @@ from dataclasses import dataclass, field
 from config.logger import logger
 from configparser import ConfigParser
 
+from utils.img_upload import upload_image
+
 
 # 导入新的配置模型
 try:
     from models.data_models import PushConfig as NewPushConfig
 
-    # from models.data_models import (
-    #     TelegramConfig,
-    #     DingRobotConfig,
-    #     FeishuBotConfig,
-    #     BarkConfig,
-    #     GotifyConfig,
-    #     WebhookConfig,
-    # )
+    from models.data_models import (
+        TelegramConfig,
+        DingRobotConfig,
+        FeishuBotConfig,
+        BarkConfig,
+        GotifyConfig,
+        WebhookConfig,
+        ImageBedConfig,
+    )
 except ImportError:
     # 回退到旧的 dataclass
     @dataclass
@@ -127,62 +130,44 @@ def upload_image_to_feishu(image_bytes: bytes, app_id: str, app_secret: str):
         raise Exception(f"feishubot 图片上传失败: {result}")
 
 
+def upload_image_to_imgbed(
+    image_bytes: bytes,
+    api_url: str = "",
+    token: str = "",
+) -> Dict[str, Any]:
+    """
+    上传图片到图床，并返回图片地址
+
+    :param image_bytes: 二进制图片数据
+    :type image_bytes: bytes
+    :param api_url: 图床API地址
+    :type api_url: str
+    :param token: 图床API token
+    :type token: str
+    :return: 上传成功则返回图片地址，失败则返回None
+    :rtype: Dict[str, Any]
+    """
+    result = upload_image(image_bytes, api_url=api_url, token=token)
+    if result["success"]:
+        result_url = result["data"]["url"]
+        print(f"图片URL: {result_url}")
+        return result_url
+
+    return None
+
+
 class PushHandler:
     """推送处理器"""
 
     def __init__(
         self,
         config: Optional[NewPushConfig] = None,
-        config_file: Optional[str] = None,
     ):
         """
         初始化推送处理器
         """
         self.http = get_new_session()
-        self.config = config or self._load_config_from_file(config_file)
-
-    def _load_config_from_file(
-        self, config_file: Optional[str] = None
-    ) -> NewPushConfig:
-        """从配置文件加载配置"""
-        cfg = ConfigParser()
-        cfg.read(config_file or "config.ini", encoding="utf-8")
-
-        def get_list(section, key, fallback=""):
-            value = cfg.get(section, key, fallback=fallback)
-            return [item.strip() for item in value.split(",") if item.strip()]
-
-        # 创建新的配置对象
-        push_config = NewPushConfig(
-            enable=cfg.getboolean("setting", "enable", fallback=True),
-            error_push_only=cfg.getboolean(
-                "setting", "error_push_only", fallback=False
-            ),
-            push_servers=get_list("setting", "push_server"),
-            push_block_keys=get_list("setting", "push_block_keys"),
-        )
-
-        # 加载各服务配置
-        service_configs = {
-            "telegram": ["api_url", "bot_token", "chat_id", "http_proxy"],
-            "dingrobot": ["webhook", "secret"],
-            "feishubot": ["webhook", "app_id", "app_secret", "user_id"],
-            "bark": ["api_url", "token", "icon"],
-            "gotify": ["api_url", "token", "priority"],
-            "webhook": ["webhook_url"],
-        }
-
-        for service, keys in service_configs.items():
-            if cfg.has_section(service):
-                config_dict = {}
-                for key in keys:
-                    if key == "priority":
-                        config_dict[key] = cfg.getint(service, key, fallback=5)
-                    else:
-                        config_dict[key] = cfg.get(service, key, fallback="")
-                setattr(push_config, service, config_dict)
-
-        return push_config
+        self.config = config
 
     def _msg_replace(self, msg: str) -> str:
         """消息内容关键词替换"""
@@ -256,7 +241,6 @@ class PushHandler:
         title: str,
         push_message: str,
         img_file: Optional[bytes] = None,
-        img_url: Optional[str] = None,
     ) -> bool:
         """Telegram 推送"""
         if not self.check_telegram_connectivity():
@@ -297,7 +281,6 @@ class PushHandler:
         title: str,
         push_message: str,
         img_file: Optional[bytes] = None,
-        img_url: Optional[str] = None,
     ) -> bool:
         """钉钉群机器人推送"""
         config = self.config.dingrobot
@@ -335,7 +318,6 @@ class PushHandler:
         title: str,
         push_message: str,
         img_file: Optional[bytes] = None,
-        img_url: Optional[str] = None,
     ) -> bool:
         """飞书机器人推送"""
         config = self.config.feishubot
@@ -400,7 +382,6 @@ class PushHandler:
         title: str,
         push_message: str,
         img_file: Optional[bytes] = None,
-        img_url: Optional[str] = None,
     ) -> bool:
         """Bark 推送"""
         config = self.config.bark
@@ -430,7 +411,6 @@ class PushHandler:
         title: str,
         push_message: str,
         img_file: Optional[bytes] = None,
-        img_url: Optional[str] = None,
     ) -> bool:
         """Gotify 推送"""
         config = self.config.gotify
@@ -449,12 +429,21 @@ class PushHandler:
             "priority": priority,
         }
 
-        # TODO: img_file 暂不支持 base64编码的方式，后续考虑改成oss等外链
-        if img_url:
-            message = f"{message}\n\n![图片]({img_url})"
-            prepare_json["extras"] = {
-                "client::display": {"contentType": "text/markdown"}
-            }
+        # 增加图床上传部分
+        # 由于 gotify 不支持 base64 编码的文本方式，因此考虑改成oss外链
+        if img_file:
+            img_remote_url = upload_image_to_imgbed(
+                img_file,
+                api_url=self.config.imgbed.api_url,
+                token=self.config.imgbed.token,
+            )
+            if img_remote_url:
+                message = f"{message}\n\n![图片]({img_remote_url})"
+                # 添加 markdown 样式
+                prepare_json["extras"] = {
+                    "client::display": {"contentType": "text/markdown"}
+                }
+
         prepare_json["message"] = message
 
         return self._send_request(
@@ -488,7 +477,6 @@ class PushHandler:
         title: str = "默认标题",
         push_message: str = "",
         img_file: Optional[bytes] = None,
-        img_url: Optional[str] = None,
     ) -> bool:
         """执行推送"""
         logger.debug(f"标题：{title} 消息内容: {push_message}")
@@ -511,7 +499,7 @@ class PushHandler:
             logger.debug(f"使用推送服务: {push_server}")
             try:
                 push_method = getattr(self, push_server)
-                success = push_method(title, processed_message, img_file, img_url)
+                success = push_method(title, processed_message, img_file)
                 status_msg = "成功" if success else "失败"
                 logger.info(f"{push_server} - 推送{status_msg}")
                 results.append(success)
@@ -536,18 +524,14 @@ def push(
     title: str = DEFAULT_PUSH_TITLE,
     push_message: str = "",
     img_file: Optional[bytes] = None,
-    img_url: Optional[str] = None,
     config: Optional[NewPushConfig] = None,
-    config_file: Optional[str] = None,
 ) -> bool:
     """推送消息到指定平台"""
     if config:
         push_handler = PushHandler(config=config)
     elif _global_push_config:
         push_handler = PushHandler(config=_global_push_config)
-    elif config_file:
-        push_handler = PushHandler(config_file=config_file)
     else:
         push_handler = PushHandler()
 
-    return push_handler.push(title, push_message, img_file, img_url)
+    return push_handler.push(title, push_message, img_file)
