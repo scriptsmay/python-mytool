@@ -5,7 +5,7 @@ import urllib.parse
 import hashlib
 import httpx
 
-from typing import Optional, Dict, Any, Union, List
+from typing import Optional, Any, List
 from dataclasses import dataclass, field
 from config.logger import logger
 
