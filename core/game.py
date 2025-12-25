@@ -416,15 +416,25 @@ async def _execute_single_mission(
         elif key_name == BaseMission.SHARE:
             share_status = await mission_obj.share()
 
+    if hasattr(sign_status, "need_verify") and sign_status.need_verify:
+        sign_icon = "⏳"
+        sign_result = "需要人机验证"
+    elif sign_status:
+        sign_icon = "✓"
+        sign_result = f"+{sign_points or '0'} 米游币🪙"
+    else:
+        sign_icon = "✕"
+        sign_result = "失败"
+
     msgs_list.append(
         f"🎮『{class_type.name}』米游币任务执行情况：\n"
-        f"📅签到：{'✓' if sign_status else '✕'} +{sign_points or '0'} 米游币🪙\n"
+        f"📅签到：{sign_icon} {sign_result}\n"
         f"📰阅读：{'✓' if read_status else '✕'}\n"
         f"❤️点赞：{'✓' if like_status else '✕'}\n"
         f"↗️分享：{'✓' if share_status else '✕'}"
     )
 
-    logger.info(f"✅ 『{class_type.name}』分区任务完成")
+    logger.info(f"『{class_type.name}』分区任务完成")
 
 
 async def _send_mission_notice(
@@ -438,18 +448,14 @@ async def _send_mission_notice(
         _handle_missions_state_failure(account, missions_state_status, msgs_list)
         return
 
-    all_finished = all(
-        current == mission.threshold
-        for mission, current in missions_state.state_dict.values()
-    )
+    # 这里改成有增加就是完成任务了
+    is_finished = missions_state.current_myb > myb_before_mission
+
     notice_string = (
-        "🎉已完成今日米游币任务" if all_finished else "⚠️今日米游币任务未全部完成"
+        "🎉已完成今日米游币任务" if is_finished else "⚠️今日米游币任务未全部完成"
     )
 
     msg = f"{notice_string}"
-    for key_name, (mission, current) in missions_state.state_dict.items():
-        mission_name = _get_mission_name(key_name)
-        msg += f"\n{mission_name}：{'✓' if current >= mission.threshold else '✕'}"
 
     msg += (
         f"\n🪙获得米游币: {missions_state.current_myb - myb_before_mission}"
@@ -459,15 +465,15 @@ async def _send_mission_notice(
     msgs_list.append(msg)
 
 
-def _get_mission_name(key_name: str) -> str:
-    """获取任务名称"""
-    mission_names = {
-        BaseMission.SIGN: "📅签到",
-        BaseMission.VIEW: "📰阅读",
-        BaseMission.LIKE: "❤️点赞",
-        BaseMission.SHARE: "↗️分享",
-    }
-    return mission_names.get(key_name, key_name)
+# def _get_mission_name(key_name: str) -> str:
+#     """获取任务名称"""
+#     mission_names = {
+#         BaseMission.SIGN: "📅签到",
+#         BaseMission.VIEW: "📰阅读",
+#         BaseMission.LIKE: "❤️点赞",
+#         BaseMission.SHARE: "↗️分享",
+#     }
+#     return mission_names.get(key_name, key_name)
 
 
 class NoteNoticeStatus(BaseModel):

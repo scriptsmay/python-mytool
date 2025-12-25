@@ -149,8 +149,13 @@ class WeiboSign:
         """获取活动列表"""
         url = f"https://m.weibo.cn/api/container/getIndex?containerid={self.container_id}_-_activity_list"
         response = request_with_retry("GET", url)
+        print(f"状态码: {response.status_code}")
+        print(f"响应头: {response.headers}")
+        print(f"响应体: {response.text}")
+
         if response.status_code == 200:
             data = response.json()
+            logger.info(f"获取活动列表成功: {data}")
             return nested_lookup(data, "group", fetch_first=True) or []
         return []
 
@@ -342,9 +347,91 @@ async def _weibo_sign_impl() -> TaskResult:
 
 
 async def manually_weibo_sign() -> TaskResult:
-    """手动执行微博签到的入口函数（与其他模块保持一致）"""
+    """手动执行微博签到的入口函数"""
 
     return await _weibo_sign_impl()
+
+
+async def weibo_event_task() -> TaskResult:
+    """微博签到实现"""
+
+    async with TaskLogger("微博超话活动") as task_logger:
+        all_cookies = get_cookies(project_config.weibo_cookie)
+
+        if not all_cookies:
+            task_logger.log_failure("未配置微博cookie环境变量或config.json文件")
+            return task_logger.get_result()
+
+        try:
+            # 运行微博任务
+            task_result = await run_task(
+                "超话活动", all_cookies, single_weibo_event_sign
+            )
+
+            total_success_cnt = task_result[0]
+            total_failure_cnt = task_result[1]
+            task_name = task_result[2]
+            status_fmt = task_result[3]
+            message_content = task_result[4]
+
+            if total_success_cnt == 0 and total_failure_cnt == 0:
+                task_logger.log_warning("没有有效的微博账号配置")
+                return task_logger.get_result()
+
+            # 记录统计信息
+            if total_success_cnt > 0:
+                task_logger.log_success(f"成功 {total_success_cnt} 个账号")
+            if total_failure_cnt > 0:
+                task_logger.log_failure(f"失败 {total_failure_cnt} 个账号")
+
+            title = f"{task_name} - {status_fmt}"
+            content = f"{title}\n\n{message_content}"
+
+            task_logger.log_info(f"微博任务完成: {status_fmt}")
+
+            result = task_logger.get_result()
+            result.message = content  # 使用详细的消息内容
+
+            return result
+
+        except Exception as e:
+            task_logger.log_failure(f"微博超话任务执行失败: {e}")
+            return task_logger.get_result()
+
+
+async def single_weibo_event_sign(weibo_cookie: str) -> str:
+    """
+    执行单个微博超话活动任务
+
+    Args:
+        weibo_cookie: 微博cookie字符串
+
+    Returns:
+        任务结果
+    """
+    try:
+        weibo = WeiboSign(params=weibo_cookie)
+        event_result = weibo.has_events()
+
+        if not event_result:
+            return "暂时没有超话活动"
+
+        messages = []
+
+        gift_box = weibo.get_unclaimed_gifts()
+        logger.info(f"已获取礼包码: {gift_box}")
+
+        messages.append(f"🎁 礼包码: {gift_box}")
+
+        result_msg = "\n".join(messages)
+
+        logger.info(f"超话任务结果: {result_msg}")
+        return result_msg
+
+    except Exception as e:
+        error_msg = f"❌ 超话任务失败: {str(e)}"
+        logger.error(error_msg)
+        return error_msg
 
 
 # 测试单个cookie使用
