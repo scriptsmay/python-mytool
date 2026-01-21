@@ -283,17 +283,16 @@ async def _process_sign_result(
 
         msg = (
             f"🪪{game_detail}"
-            f"\n🎮状态: {status}"
-            f"\n{signer.record.nickname}·{signer.record.level}"
-            "\n\n🎁今日签到奖励："
-            f"\n{award.name} * {award.cnt}"
-            f"\n\n📅本月签到次数：{info.total_sign_day}"
+            f" | {signer.record.nickname}·lv{signer.record.level}"
+            f" | 🎮状态: {status}"
+            f"\n🎁今日签到奖励：{award.name} * {award.cnt}"
+            f"\n📅本月签到次数：{info.total_sign_day}"
         )
 
         if info.is_sign:
             img_file = await get_file(award.icon)
             # TODO: 优化图片推送方式
-            # task_logger.log_success(msg, {"award_icon": award.icon})
+            logger.info("签到成功")
         else:
             msg = (
                 f"⚠️{game_detail} 签到失败！请尝试重新签到，"
@@ -428,9 +427,9 @@ async def _execute_single_mission(
 
     msgs_list.append(
         f"🎮『{class_type.name}』米游币任务执行情况：\n"
-        f"📅签到：{sign_icon} {sign_result}\n"
-        f"📰阅读：{'✓' if read_status else '✕'}\n"
-        f"❤️点赞：{'✓' if like_status else '✕'}\n"
+        f"📅签到：{sign_icon} {sign_result} | "
+        f"📰阅读：{'✓' if read_status else '✕'} | "
+        f"❤️点赞：{'✓' if like_status else '✕'} | "
         f"↗️分享：{'✓' if share_status else '✕'}"
     )
 
@@ -459,7 +458,7 @@ async def _send_mission_notice(
 
     msg += (
         f"\n🪙获得米游币: {missions_state.current_myb - myb_before_mission}"
-        f"\n💰当前米游币: {missions_state.current_myb}"
+        f" | 💰当前米游币: {missions_state.current_myb}"
     )
 
     msgs_list.append(msg)
