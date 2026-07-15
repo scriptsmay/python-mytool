@@ -5,3 +5,5 @@ tenacity
 pytz
 pydantic-settings
 bs4
+pillow
+requests
