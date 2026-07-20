@@ -344,6 +344,7 @@ class LoginSession(BaseModel):
     app_id: str
     client_type: str
     user_agent: str
+    client: Optional[Any] = None
 
 
 class QrCodeChallenge(BaseModel):
@@ -743,7 +744,7 @@ class BBSCookies(BaseModelWithSetter, BaseModelWithUpdate):
         if stoken_v2:
             cookies.stoken_v2 = stoken_v2
         if stoken_v1:
-            cookies.stoken_v1 = stoken_v2 if stoken_v2 else stoken_v1
+            cookies.stoken_v1 = stoken_v1
 
         ct = raw.get("cookie_token_v2") or raw.get("cookie_token")
         if ct:
@@ -1004,12 +1005,28 @@ class ConfigDataManager:
 
     @classmethod
     def save_config(cls):
-        """保存配置文件"""
+        """原子保存配置文件：先写临时文件，再 os.replace 到位。"""
+        import os
+        import tempfile
+
         if cls.config_data is None:
             cls.load_config()
         logger.info(f"正在保存配置文件...{project_config_path}")
-        with open(project_config_path, "w", encoding="utf-8") as f:
-            json.dump(cls.config_data.model_dump(), f, indent=4, ensure_ascii=False)
+        config_dir = Path(project_config_path).parent
+        payload = json.dumps(cls.config_data.model_dump(), indent=4, ensure_ascii=False)
+        fd, tmp_path = tempfile.mkstemp(dir=config_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, project_config_path)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         logger.info("✅ 配置文件保存成功")
 
     # 便捷访问方法 - 添加安全检查

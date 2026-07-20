@@ -152,24 +152,14 @@ async def execute_task_with_logging(
     """
     async with TaskLogger(task_name) as task_logger:
         try:
-            # 执行任务函数
             result = await task_func(*args, **kwargs)
 
-            # 如果任务函数返回了TaskResult，直接返回
             if isinstance(result, TaskResult):
                 return result
-
-            # 否则根据返回内容判断成功失败
-            if result and not isinstance(result, str):
-                task_logger.log_success(f"任务 {task_name} 执行完成")
-            elif (
-                isinstance(result, str)
-                and "失败" not in result
-                and "错误" not in result
-            ):
-                task_logger.log_success(f"任务 {task_name} 执行完成")
+            if isinstance(result, str):
+                task_logger.log_failure(result)
             else:
-                task_logger.log_failure(f"任务 {task_name} 执行失败")
+                task_logger.log_success(f"任务 {task_name} 执行完成")
 
             return task_logger.get_result()
 

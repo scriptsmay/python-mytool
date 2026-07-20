@@ -2,6 +2,7 @@ import http.cookies
 
 import httpx
 
+from config import logger
 from models import (
     QrCodeChallenge,
     QrLoginPollResult,
@@ -51,9 +52,23 @@ def _build_client(session: LoginSession) -> httpx.AsyncClient:
     return httpx.AsyncClient(headers=headers, timeout=10)
 
 
+async def _ensure_client(session: LoginSession) -> httpx.AsyncClient:
+    """确保 LoginSession 持有复用的 AsyncClient"""
+    if session.client is None:
+        session.client = _build_client(session)
+    return session.client
+
+
+async def close_session(session: LoginSession) -> None:
+    """关闭登录会话的 HTTP 客户端"""
+    if session.client is not None:
+        await session.client.aclose()
+        session.client = None
+
+
 async def create_qr_login(session: LoginSession) -> QrCodeChallenge:
     """创建二维码登录挑战。返回 ticket 和 url。"""
-    client = _build_client(session)
+    client = await _ensure_client(session)
     try:
         path = "web" if session.provider == QrLoginProvider.WEB else "app"
         url = URL_CREATE_QR_LOGIN.format(path)
@@ -66,8 +81,14 @@ async def create_qr_login(session: LoginSession) -> QrCodeChallenge:
         if not ticket or not qr_url:
             raise ValueError(f"创建二维码失败: 响应缺少 ticket/url, retcode={body.get('retcode')}")
         return QrCodeChallenge(ticket=ticket, url=qr_url)
-    finally:
-        await client.aclose()
+    except httpx.HTTPStatusError as e:
+        raise
+    except ValueError:
+        raise
+    except Exception as e:
+        # 关闭并重建，避免后续轮询复用异常连接
+        await close_session(session)
+        raise
 
 
 def parse_set_cookie_headers(response: httpx.Response) -> dict[str, str]:
@@ -92,45 +113,46 @@ async def query_qr_login(
     path = "web" if session.provider == QrLoginProvider.WEB else "app"
     url = URL_QUERY_QR_LOGIN.format(path)
 
-    client = _build_client(session)
-    try:
-        resp = await client.post(url, json={"ticket": ticket})
-        resp.raise_for_status()
-        body = resp.json()
-        data = body.get("data") or {}
-        status = data.get("status", "")
+    client = await _ensure_client(session)
+    resp = await client.post(url, json={"ticket": ticket})
+    resp.raise_for_status()
+    body = resp.json()
+    data = body.get("data") or {}
+    status = data.get("status", "")
 
-        state_map = {
-            "Created": QrLoginState.CREATED,
-            "Scanned": QrLoginState.SCANNED,
-            "Confirmed": QrLoginState.CONFIRMED,
-            "Expired": QrLoginState.EXPIRED,
-            "Canceled": QrLoginState.CANCELED,
-        }
-        state = state_map.get(status, QrLoginState.UNKNOWN)
+    state_map = {
+        "Created": QrLoginState.CREATED,
+        "Scanned": QrLoginState.SCANNED,
+        "Confirmed": QrLoginState.CONFIRMED,
+        "Expired": QrLoginState.EXPIRED,
+        "Canceled": QrLoginState.CANCELED,
+    }
+    state = state_map.get(status, QrLoginState.UNKNOWN)
 
-        cookies: dict[str, str] = {}
-        tokens: dict[str, str] = {}
-        user_info: dict[str, str] = {}
+    if state is QrLoginState.UNKNOWN and isinstance(body.get("retcode"), int) and body["retcode"] != 0:
+        logger.warning(f"非零 retcode={body.get('retcode')}，视为不可用: {body.get('message')}")
+        state = QrLoginState.EXPIRED
 
-        if state == QrLoginState.CONFIRMED:
-            cookies = parse_set_cookie_headers(resp)
-            if "tokens" in data:
-                raw_tokens = data["tokens"]
-                if isinstance(raw_tokens, list):
-                    for t in raw_tokens:
-                        if isinstance(t, dict) and "name" in t and "token" in t:
-                            tokens[t["name"]] = t["token"]
-            if "user_info" in data and isinstance(data["user_info"], dict):
-                user_info = {k: str(v) for k, v in data["user_info"].items()}
+    cookies: dict[str, str] = {}
+    tokens: dict[str, str] = {}
+    user_info: dict[str, str] = {}
 
-        return QrLoginPollResult(
-            state=state,
-            cookies=cookies,
-            tokens=tokens,
-            user_info=user_info,
-            retcode=body.get("retcode"),
-            message=body.get("message"),
-        )
-    finally:
-        await client.aclose()
+    if state == QrLoginState.CONFIRMED:
+        cookies = parse_set_cookie_headers(resp)
+        if "tokens" in data:
+            raw_tokens = data["tokens"]
+            if isinstance(raw_tokens, list):
+                for t in raw_tokens:
+                    if isinstance(t, dict) and "name" in t and "token" in t:
+                        tokens[t["name"]] = t["token"]
+        if "user_info" in data and isinstance(data["user_info"], dict):
+            user_info = {k: str(v) for k, v in data["user_info"].items()}
+
+    return QrLoginPollResult(
+        state=state,
+        cookies=cookies,
+        tokens=tokens,
+        user_info=user_info,
+        retcode=body.get("retcode"),
+        message=body.get("message"),
+    )
