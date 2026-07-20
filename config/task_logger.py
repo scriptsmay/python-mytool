@@ -155,7 +155,16 @@ async def execute_task_with_logging(
             result = await task_func(*args, **kwargs)
 
             if isinstance(result, TaskResult):
-                return result
+                # 用 TaskResult 更新 TaskLogger 的计数器，保持统计一致
+                if result.status == TaskStatus.SUCCESS:
+                    task_logger.log_success(result.message)
+                elif result.status == TaskStatus.FAILED:
+                    task_logger.log_failure(result.message)
+                elif result.status == TaskStatus.PARTIAL_SUCCESS:
+                    task_logger.success_count += result.success_count
+                    task_logger.failure_count += result.failure_count
+                    task_logger.total_count += result.total_count
+                return task_logger.get_result()
             if isinstance(result, str):
                 task_logger.log_failure(result)
             else:

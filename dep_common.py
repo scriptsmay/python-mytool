@@ -4,7 +4,7 @@ from utils import push, init_config
 from config import logger
 
 
-async def ql_push(title, message):
+def ql_push(title, message):
     if os.getenv("mihuyo_push") == "1":
         try:
             from models import project_config

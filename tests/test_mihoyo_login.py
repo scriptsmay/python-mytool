@@ -307,6 +307,38 @@ class TestBuildAndValidateAccount:
         assert result.bbs_uid == "uid1"
         assert result.cookies.stoken_v2 == "v2token"
 
+    @pytest.mark.asyncio
+    async def test_app_qr_body_tokens_merged(self):
+        """App QR 仅在 body 返回 tokens 时应能正常构建账号"""
+        session = _make_app(QrLoginProvider.APP)
+        poll = QrLoginPollResult(
+            state=QrLoginState.CONFIRMED,
+            cookies={"account_id_v2": "uid1"},
+            tokens={"stoken": "app-stoken", "cookie_token": "app-ctok"},
+            user_info={"aid": "12345", "mid": "m123"},
+        )
+        result = await build_and_validate_account(poll, session)
+        assert isinstance(result, UserAccount)
+        assert result.bbs_uid == "uid1"
+
+    @pytest.mark.asyncio
+    async def test_verify_credentials_rejects_invalid(self):
+        """verify_credentials 应拒绝无效凭据（login_expired）"""
+        from core.login import verify_credentials
+        from services.common import BaseApiStatus
+        from unittest.mock import AsyncMock, patch
+
+        account = _make_account()
+        with patch(
+            "core.login.get_game_record",
+            return_value=(BaseApiStatus(login_expired=True), None),
+        ):
+            result = await verify_credentials(account)
+
+        from config.task_logger import TaskResult as _TR, TaskStatus as _TS
+        assert isinstance(result, _TR)
+        assert result.status == _TS.FAILED
+
 
 def _make_account(uid="uid1"):
     return UserAccount(
@@ -389,3 +421,54 @@ def test_save_config_is_atomic(tmp_path, monkeypatch):
     raw = config_path.read_text(encoding="utf-8")
     parsed = json.loads(raw)
     assert "users" in parsed
+
+
+def test_persist_account_rollback_on_disk_failure(tmp_path, monkeypatch):
+    """save_config 失败时内存配置应回滚，不应保留污染状态"""
+    import asyncio
+    import json
+    from models.data_models import ConfigData
+
+    config_dir = tmp_path
+    config_path = config_dir / "config.json"
+    user_data = {
+        "users": {
+            "uid1": {
+                "accounts": {
+                    "uid1": {
+                        "phone_number": None,
+                        "cookies": {"bbs_uid": "uid1", "stoken_v2": "old",
+                                "cookie_token": "oldctok", "stuid": "uid1"},
+                        "device_id_ios": "orig_ios",
+                        "device_id_android": "orig_and",
+                    }
+                }
+            }
+        }
+    }
+    config_path.write_text(json.dumps(user_data), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "models.data_models.project_config_path",
+        Path(config_path),
+    )
+    ConfigDataManager._initialized = False
+    ConfigDataManager.load_config()
+
+    new_account = _make_account()
+    new_account.cookies.stoken_v2 = "newv2t"
+
+    # 模拟磁盘写入失败
+    def fail_save():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ConfigDataManager, "save_config", fail_save)
+
+    err = asyncio.run(persist_account(new_account, "uid1"))
+
+    from config.task_logger import TaskResult as _TR, TaskStatus as _TS
+    assert isinstance(err, _TR)
+    assert err.status == _TS.FAILED
+    # 内存中应为旧值（回滚成功）
+    saved = ConfigDataManager.config_data.users["uid1"].accounts["uid1"]
+    assert saved.cookies.stoken_v2 == "old"

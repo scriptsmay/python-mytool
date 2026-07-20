@@ -17,6 +17,7 @@ from services.mihoyo_login_api import (
     create_qr_login,
     query_qr_login,
 )
+from services.common import get_game_record
 from utils import generate_device_id, generate_qr_img, logger, push
 from config.task_logger import execute_task_with_logging, TaskResult, TaskStatus
 
@@ -163,12 +164,22 @@ async def build_and_validate_account(
 ) -> Union[UserAccount, TaskResult]:
     """从轮询结果构建 UserAccount 并验证凭据有效性。
 
-    验证要求：必须包含账号标识、cookie_token 和 stoken。缺少 stoken 则无法
-    完成米游币等社区任务。
+    验证要求：必须包含账号标识、cookie_token 和 stoken。App QR 可能只在 body
+    返回 tokens/user_info 而空缺 Set-Cookie，此时需要合并轮询结果中的 body 字段。
     """
-    raw_cookies = poll_result.cookies
-    if not raw_cookies:
+    raw_cookies = dict(poll_result.cookies)
+    if not raw_cookies and not poll_result.tokens:
         return _failed_result("扫码成功，但登录凭据不完整")
+
+    # App QR 可能在响应 body 中返回 tokens 和 user_info，而 Set-Cookie 仅有
+    # 账号查询字段。合并两者再归一化。
+    for name, token in poll_result.tokens.items():
+        raw_cookies.setdefault(name, token)
+    if poll_result.user_info:
+        if "aid" in poll_result.user_info:
+            raw_cookies.setdefault("account_id", str(poll_result.user_info["aid"]))
+        if "mid" in poll_result.user_info:
+            raw_cookies.setdefault("mid", str(poll_result.user_info["mid"]))
 
     cookies = BBSCookies.from_login_cookie(raw_cookies)
     bbs_uid = _extract_uid(cookies)
@@ -192,8 +203,27 @@ async def build_and_validate_account(
     return account
 
 
+async def verify_credentials(account: UserAccount) -> Union[None, TaskResult]:
+    """调用账号/角色接口验证凭据真实有效。返回 None 表示通过。"""
+    try:
+        status, _records = await get_game_record(account, retry=False)
+    except Exception as e:
+        logger.error(f"凭据验证请求异常: {e}")
+        return _failed_result("凭据验证请求失败，请稍后重试")
+
+    if status.login_expired:
+        return _failed_result("新凭据已过期或无效，无法完成登录")
+    if not status.success:
+        return _failed_result("凭据验证失败，请稍后重试")
+    return None
+
+
 async def persist_account(account: UserAccount, bbs_uid: str) -> Union[None, TaskResult]:
-    """原子写入配置。已有账号保留原有 device_id_ios/device_fp，只更新 cookies。"""
+    """原子写入配置。已有账号保留原有 device_id_ios/device_fp，只更新 cookies。
+
+    先备份内存配置，写入失败时回滚，避免全局状态被污染。
+    """
+    import copy
     from models import UserData
 
     if bbs_uid not in ConfigDataManager.config_data.users:
@@ -201,6 +231,8 @@ async def persist_account(account: UserAccount, bbs_uid: str) -> Union[None, Tas
 
     user_data = ConfigDataManager.config_data.users[bbs_uid]
     existing = user_data.accounts.get(bbs_uid)
+
+    backup = copy.deepcopy(ConfigDataManager.config_data)
 
     if existing:
         existing.cookies = account.cookies
@@ -211,12 +243,13 @@ async def persist_account(account: UserAccount, bbs_uid: str) -> Union[None, Tas
         ConfigDataManager.save_config()
     except Exception as e:
         logger.error(f"保存配置失败: {e}")
+        ConfigDataManager.config_data = backup
         return _failed_result("登录成功，但保存配置失败")
     return None
 
 
 async def _mys_login_impl() -> Union[TaskResult, str]:
-    """米游社登录实现（Passport Web QR 方案）"""
+    """米游社登录实现（Passport Web QR 方案，可选 App QR 回退）"""
     session = _build_login_session()
     provider_label = "Web" if session.provider == QrLoginProvider.WEB else "App"
     logger.info(f"开始 {provider_label} QR 登录, device_id={session.device_id[:8]}...")
@@ -235,8 +268,20 @@ async def _mys_login_impl() -> Union[TaskResult, str]:
         # 3. 构建和验证账号
         account_or_err = await build_and_validate_account(poll_result, session)
         if isinstance(account_or_err, TaskResult):
+            # Web QR 缺少 stoken 且启用 App QR 回退时，尝试 App QR
+            if (
+                session.provider == QrLoginProvider.WEB
+                and project_config.preference.qrcode_app_fallback
+            ):
+                logger.info("Web QR 凭据不完整，回退到 App QR")
+                return await _app_qr_fallback()
             return account_or_err
         account = account_or_err
+
+        # 3.1 凭据业务验证
+        verify_err = await verify_credentials(account)
+        if verify_err:
+            return verify_err
 
         # 4. 持久化
         bbs_uid = account.bbs_uid or ""
@@ -247,4 +292,43 @@ async def _mys_login_impl() -> Union[TaskResult, str]:
         await close_session(session)
 
     logger.info(f"米游社账户 {bbs_uid[:4]}**** 绑定成功")
+    return _success_result(f"米游社账户 {bbs_uid[:4]}**** 绑定成功")
+
+
+async def _app_qr_fallback() -> TaskResult:
+    """App QR 回退：Web QR 失败时创建新的 App 二维码并等待确认。"""
+    session = _build_login_session()
+    session.provider = QrLoginProvider.APP
+    session.app_id = "ddxf5dufpuyo"
+    session.client_type = "3"
+    session.user_agent = "HYPContainer/1.3.3.182"
+    session.client = None
+    logger.info(f"开始 App QR 回退登录, device_id={session.device_id[:8]}...")
+
+    try:
+        challenge = await create_and_publish_qr(session)
+        if isinstance(challenge, TaskResult):
+            return challenge
+
+        poll_result = await wait_for_confirmation(session, challenge)
+        if isinstance(poll_result, TaskResult):
+            return poll_result
+
+        account_or_err = await build_and_validate_account(poll_result, session)
+        if isinstance(account_or_err, TaskResult):
+            return account_or_err
+        account = account_or_err
+
+        verify_err = await verify_credentials(account)
+        if verify_err:
+            return verify_err
+
+        bbs_uid = account.bbs_uid or ""
+        err = await persist_account(account, bbs_uid)
+        if err:
+            return err
+    finally:
+        await close_session(session)
+
+    logger.info(f"米游社账户 {bbs_uid[:4]}**** 绑定成功（App QR 回退）")
     return _success_result(f"米游社账户 {bbs_uid[:4]}**** 绑定成功")
