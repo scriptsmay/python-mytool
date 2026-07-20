@@ -19,7 +19,7 @@ async def mys_login_task():
 
     try:
         task_result = await mys_login()
-        is_success = task_result.is_success()
+        is_success = task_result.is_success
         if is_success:
             from models import project_config
             from utils import push
@@ -29,7 +29,15 @@ async def mys_login_task():
                 push_message=task_result.message,
                 config=project_config.push_config,
             )
+        else:
+            from models import project_config
+            from utils import push
 
+            push(
+                title="米游社登录失败",
+                push_message=task_result.message,
+                config=project_config.push_config,
+            )
         return task_result.message
     except Exception as e:
         error_msg = f"米游社登录过程中发生异常: {e}"

@@ -25,7 +25,7 @@ async def handle_login_failure(error):
     """处理登录失败的逻辑"""
     error_msg = f"执行过程中出现错误: {error}"
     logger.error(f"❌任务执行失败: {error}")
-    ql_push(FAILURE_TITLE, error_msg)
+    await ql_push(FAILURE_TITLE, error_msg)
 
 
 async def main_login_task():
@@ -34,6 +34,8 @@ async def main_login_task():
         result = await mys_login()
         if result.is_success:
             await ql_push(SUCCESS_TITLE, result.message)
+        else:
+            await ql_push(FAILURE_TITLE, result.message)
     except Exception as e:
         await handle_login_failure(e)
         raise

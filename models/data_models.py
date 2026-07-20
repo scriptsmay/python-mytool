@@ -2,6 +2,7 @@ import inspect
 import json
 import time
 from datetime import datetime
+from enum import Enum
 from json import JSONDecodeError
 from pathlib import Path
 from typing import (
@@ -330,6 +331,47 @@ class BaseApiStatus(BaseModel):
         return None
 
 
+class QrLoginProvider(str, Enum):
+    """二维码登录提供方"""
+    WEB = "web"
+    APP = "app"
+
+
+class LoginSession(BaseModel):
+    """登录会话，覆盖创建和轮询全过程"""
+    provider: QrLoginProvider
+    device_id: str
+    app_id: str
+    client_type: str
+    user_agent: str
+
+
+class QrCodeChallenge(BaseModel):
+    """二维码挑战数据"""
+    ticket: str
+    url: str
+
+
+class QrLoginState(str, Enum):
+    """二维码登录状态"""
+    CREATED = "Created"
+    SCANNED = "Scanned"
+    CONFIRMED = "Confirmed"
+    EXPIRED = "Expired"
+    CANCELED = "Canceled"
+    UNKNOWN = "Unknown"
+
+
+class QrLoginPollResult(BaseModel):
+    """二维码登录轮询结果"""
+    state: QrLoginState
+    cookies: dict[str, str] = {}
+    tokens: dict[str, str] = {}
+    user_info: dict[str, Any] = {}
+    retcode: Optional[int] = None
+    message: Optional[str] = None
+
+
 class CreateMobileCaptchaStatus(BaseApiStatus):
     """发送短信验证码返回结果"""
 
@@ -547,6 +589,8 @@ class Preference(BaseModel):
     game_token_app_id: str = "2"
     qrcode_query_interval: float = 1
     qrcode_wait_time: float = 120
+    qrcode_provider: str = "web"
+    qrcode_app_fallback: bool = False
     resin_interval: int = 30
 
     _TARGET_TIME_STR = "20:00"
@@ -656,12 +700,67 @@ class BBSCookies(BaseModelWithSetter, BaseModelWithUpdate):
     login_ticket: Optional[str] = None
     ltoken: Optional[str] = None
     mid: Optional[str] = None
+    # v2 字段
+    ltuid_v2: Optional[str] = None
+    account_id_v2: Optional[str] = None
+    cookie_token_v2: Optional[str] = None
+    ltoken_v2: Optional[str] = None
+    ltmid_v2: Optional[str] = None
+    account_mid_v2: Optional[str] = None
 
     def __init__(self, **data: Any):
         super().__init__(**data)
         stoken = data.get("stoken")
         if stoken:
             self.stoken = stoken
+
+    @classmethod
+    def from_login_cookie(cls, raw: dict[str, str]) -> "BBSCookies":
+        """从登录响应的 Cookie 字典归一化，支持 v1/v2 混合字段"""
+        cookies = cls()
+
+        # 保留原始 v2 字段
+        for v2_field in ("account_id_v2", "ltuid_v2", "cookie_token_v2",
+                         "ltoken_v2", "ltmid_v2", "account_mid_v2"):
+            if raw.get(v2_field):
+                setattr(cookies, v2_field, raw[v2_field])
+
+        # 账号标识
+        uid = (
+            raw.get("account_id_v2")
+            or raw.get("ltuid_v2")
+            or raw.get("account_id")
+            or raw.get("ltuid")
+            or raw.get("login_uid")
+            or raw.get("stuid")
+        )
+        if uid:
+            cookies.bbs_uid = uid
+
+        # token
+        stoken_v2 = raw.get("stoken_v2")
+        stoken_v1 = raw.get("stoken") or raw.get("stoken_v1")
+        if stoken_v2:
+            cookies.stoken_v2 = stoken_v2
+        if stoken_v1:
+            cookies.stoken_v1 = stoken_v2 if stoken_v2 else stoken_v1
+
+        ct = raw.get("cookie_token_v2") or raw.get("cookie_token")
+        if ct:
+            cookies.cookie_token = ct
+
+        lt = raw.get("ltoken_v2") or raw.get("ltoken")
+        if lt:
+            cookies.ltoken = lt
+
+        mid = raw.get("account_mid_v2") or raw.get("ltmid_v2") or raw.get("mid")
+        if mid:
+            cookies.mid = mid
+
+        if raw.get("login_ticket"):
+            cookies.login_ticket = raw["login_ticket"]
+
+        return cookies
 
     def is_correct(self) -> bool:
         """判断是否为正确的Cookies"""
