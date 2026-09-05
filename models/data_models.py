@@ -592,6 +592,8 @@ class Preference(BaseModel):
     qrcode_wait_time: float = 120
     qrcode_provider: str = "web"
     qrcode_app_fallback: bool = False
+    myb_sign_enabled: bool = True
+    """讨论区签到开关：米哈游 bbs-api signIn 鉴权失效期间可关闭，仅跳过签到子任务"""
     resin_interval: int = 30
 
     _TARGET_TIME_STR = "20:00"

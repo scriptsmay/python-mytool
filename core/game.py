@@ -407,6 +407,12 @@ async def _execute_single_mission(
 
     for key_name in missions_state.state_dict:
         if key_name == BaseMission.SIGN:
+            if not project_config.preference.myb_sign_enabled:
+                # 讨论区签到接口鉴权失效（详见知识库 mystool changelog 2026-09-05），
+                # 配置关闭后跳过，避免每账号产生两条错误日志
+                sign_status = MissionStatus(login_expired=True)
+                logger.info(f"『{class_type.name}』分区签到已通过配置关闭，跳过")
+                continue
             sign_status, sign_points = await mission_obj.sign(user)
         elif key_name == BaseMission.VIEW:
             read_status = await mission_obj.read()
