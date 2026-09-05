@@ -4,10 +4,13 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from core.login import build_and_validate_account, persist_account
+from core.login import build_and_validate_account, persist_account, verify_credentials
 from models import (
     BBSCookies,
+    BaseApiStatus,
     ConfigDataManager,
+    GameRecord,
+    GetCookieStatus,
     LoginSession,
     QrCodeChallenge,
     QrLoginPollResult,
@@ -15,6 +18,7 @@ from models import (
     QrLoginState,
     UserAccount,
 )
+from config.task_logger import execute_task_with_logging, TaskResult, TaskStatus
 from services.mihoyo_login_api import (
     create_qr_login,
     parse_set_cookie_headers,
@@ -472,3 +476,272 @@ def test_persist_account_rollback_on_disk_failure(tmp_path, monkeypatch):
     # 内存中应为旧值（回滚成功）
     saved = ConfigDataManager.config_data.users["uid1"].accounts["uid1"]
     assert saved.cookies.stoken_v2 == "old"
+
+
+# ===================== ADR-002 新增测试 =====================
+
+
+class TestAppQrTokenExchange:
+    """App QR 确认响应仅含 stoken + user_info 时，应通过兑换接口构建完整账号"""
+
+    @pytest.mark.asyncio
+    async def test_app_qr_body_only_triggers_exchange(self):
+        from unittest.mock import patch
+
+        session = _make_app(QrLoginProvider.APP)
+        poll = QrLoginPollResult(
+            state=QrLoginState.CONFIRMED,
+            cookies={"account_id_v2": "uid1"},
+            tokens={"stoken": "app-stoken"},
+            user_info={"aid": "12345", "mid": "m123"},
+        )
+        with patch(
+            "core.login.get_cookie_account_info_by_stoken",
+            return_value=(GetCookieStatus(success=True), "exchanged-ctok"),
+        ):
+            result = await build_and_validate_account(poll, session)
+
+        assert isinstance(result, UserAccount)
+        assert result.bbs_uid == "uid1"
+        assert result.cookies.cookie_token == "exchanged-ctok"
+        assert result.cookies.stoken_v1 == "app-stoken"
+
+    @pytest.mark.asyncio
+    async def test_exchange_missing_cookie_token_fails(self):
+        import asyncio
+        from unittest.mock import patch
+
+        session = _make_app(QrLoginProvider.APP)
+        poll = QrLoginPollResult(
+            state=QrLoginState.CONFIRMED,
+            cookies={"account_id_v2": "uid1"},
+            tokens={"stoken": "app-stoken"},
+            user_info={"aid": "12345", "mid": "m123"},
+        )
+        with patch(
+            "core.login.get_cookie_account_info_by_stoken",
+            return_value=(GetCookieStatus(missing_cookie_token=True), None),
+        ):
+            result = await build_and_validate_account(poll, session)
+
+        assert isinstance(result, TaskResult)
+        assert result.status == TaskStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_exchange_network_error_fails(self):
+        from unittest.mock import patch
+
+        session = _make_app(QrLoginProvider.APP)
+        poll = QrLoginPollResult(
+            state=QrLoginState.CONFIRMED,
+            cookies={"account_id_v2": "uid1"},
+            tokens={"stoken": "app-stoken"},
+            user_info={"aid": "12345", "mid": "m123"},
+        )
+        with patch(
+            "core.login.get_cookie_account_info_by_stoken",
+            return_value=(GetCookieStatus(network_error=True), None),
+        ):
+            result = await build_and_validate_account(poll, session)
+
+        assert isinstance(result, TaskResult)
+        assert result.status == TaskStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_exchange_success_no_credentials_in_logs(self, caplog):
+        import logging
+        from unittest.mock import patch
+
+        caplog.set_level(logging.DEBUG)
+        session = _make_app(QrLoginProvider.APP)
+        poll = QrLoginPollResult(
+            state=QrLoginState.CONFIRMED,
+            cookies={"account_id_v2": "uid1"},
+            tokens={"stoken": "app-stoken"},
+            user_info={"aid": "12345", "mid": "m123"},
+        )
+        # 唯一敏感字符串，验证其不会出现在任何日志中
+        with patch(
+            "core.login.get_cookie_account_info_by_stoken",
+            return_value=(GetCookieStatus(success=True), "UNIQUE_SECRET_TOKEN_9F2A"),
+        ):
+            await build_and_validate_account(poll, session)
+
+        assert "UNIQUE_SECRET_TOKEN_9F2A" not in caplog.text
+        assert "app-stoken" not in caplog.text
+
+
+class TestUnifiedCredentialVerification:
+    """Web QR 与 App QR 共用同一验证：游戏角色 + 米游币社区只读接口"""
+
+    @pytest.mark.asyncio
+    async def test_game_ok_community_fail_does_not_overwrite(self):
+        from unittest.mock import patch
+
+        account = _make_account()
+        with patch(
+            "core.login.get_game_record",
+            return_value=(BaseApiStatus(success=True), [GameRecord(
+                region_name="cn_gf01", game_id=2, level=60,
+                region="cn_gf01", game_role_id="1", nickname="n",
+            )]),
+        ), patch(
+            "core.login.get_missions",
+            return_value=(BaseApiStatus(login_expired=True), None),
+        ):
+            result = await verify_credentials(account)
+
+        assert isinstance(result, TaskResult)
+        assert result.status == TaskStatus.FAILED
+        assert "米游币社区" in result.message
+
+    @pytest.mark.asyncio
+    async def test_game_ok_community_ok_passes(self):
+        from unittest.mock import patch
+
+        account = _make_account()
+        with patch(
+            "core.login.get_game_record",
+            return_value=(BaseApiStatus(success=True), [GameRecord(
+                region_name="cn_gf01", game_id=2, level=60,
+                region="cn_gf01", game_role_id="1", nickname="n",
+            )]),
+        ), patch(
+            "core.login.get_missions",
+            return_value=(BaseApiStatus(success=True), []),
+        ):
+            result = await verify_credentials(account)
+
+        assert result is None
+
+
+class TestPersistFullSnapshotRollback:
+    """保存失败时回滚完整快照：新 UID 不残留，已有 UID 保持原值"""
+
+    @pytest.mark.asyncio
+    async def test_new_uid_absent_after_disk_failure(self, tmp_path, monkeypatch):
+        import asyncio
+        import json
+        from models.data_models import ConfigData
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({
+            "users": {
+                "uid1": {"accounts": {"uid1": {
+                    "phone_number": None,
+                    "cookies": {"bbs_uid": "uid1", "stoken_v2": "old",
+                                "cookie_token": "oldctok", "stuid": "uid1"},
+                    "device_id_ios": "orig_ios",
+                    "device_id_android": "orig_and",
+                }}}
+            }
+        }), encoding="utf-8")
+
+        monkeypatch.setattr("models.data_models.project_config_path", Path(config_path))
+        ConfigDataManager._initialized = False
+        ConfigDataManager.load_config()
+
+        new_account = _make_account(uid="uid999")
+        monkeypatch.setattr(ConfigDataManager, "save_config", lambda: (_ for _ in ()).throw(OSError("disk full")))
+
+        err = await persist_account(new_account, "uid999")
+        assert isinstance(err, TaskResult)
+        assert err.status == TaskStatus.FAILED
+        # 新 UID 不得残留
+        assert "uid999" not in ConfigDataManager.config_data.users
+
+    @pytest.mark.asyncio
+    async def test_existing_uid_preserved_after_disk_failure(self, tmp_path, monkeypatch):
+        import asyncio
+        import json
+        from models.data_models import ConfigData
+
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({
+            "users": {
+                "uid1": {"accounts": {"uid1": {
+                    "phone_number": None,
+                    "cookies": {"bbs_uid": "uid1", "stoken_v2": "old",
+                                "cookie_token": "oldctok", "stuid": "uid1"},
+                    "device_id_ios": "orig_ios",
+                    "device_id_android": "orig_and",
+                    "device_fp": "orig_fp",
+                }}}
+            }
+        }), encoding="utf-8")
+
+        monkeypatch.setattr("models.data_models.project_config_path", Path(config_path))
+        ConfigDataManager._initialized = False
+        ConfigDataManager.load_config()
+
+        new_account = _make_account()
+        new_account.cookies.stoken_v2 = "newv2t"
+        monkeypatch.setattr(ConfigDataManager, "save_config", lambda: (_ for _ in ()).throw(OSError("disk full")))
+
+        err = await persist_account(new_account, "uid1")
+        assert isinstance(err, TaskResult)
+        assert err.status == TaskStatus.FAILED
+        saved = ConfigDataManager.config_data.users["uid1"].accounts["uid1"]
+        # cookies、设备字段、偏好均保持原值
+        assert saved.cookies.stoken_v2 == "old"
+        assert saved.cookies.cookie_token == "oldctok"
+        assert saved.device_id_ios == "orig_ios"
+        assert saved.device_fp == "orig_fp"
+
+
+class TestTaskResultMerge:
+    """execute_task_with_logging 应以返回的 TaskResult 为权威结果，保留原始数据"""
+
+    @pytest.mark.asyncio
+    async def test_preserves_data_counts_and_partial_status(self):
+        async def impl():
+            return TaskResult(
+                status=TaskStatus.PARTIAL_SUCCESS,
+                message="部分完成",
+                data={"detail": [1, 2, 3]},
+                success_count=2,
+                failure_count=1,
+                total_count=3,
+            )
+
+        result = await execute_task_with_logging("任务", impl)
+        assert result.status == TaskStatus.PARTIAL_SUCCESS
+        assert result.message == "部分完成"
+        assert result.data == {"detail": [1, 2, 3]}
+        assert result.success_count == 2
+        assert result.failure_count == 1
+        assert result.total_count == 3
+
+    @pytest.mark.asyncio
+    async def test_partial_counts_mismatch_returns_diagnostic_failure(self):
+        async def impl():
+            return TaskResult(
+                status=TaskStatus.PARTIAL_SUCCESS,
+                message="m",
+                success_count=2,
+                failure_count=1,
+                total_count=9,
+            )
+
+        result = await execute_task_with_logging("任务", impl)
+        assert result.status == TaskStatus.FAILED
+        assert "计数不一致" in result.message
+
+    @pytest.mark.asyncio
+    async def test_complete_result_preserved(self):
+        async def impl():
+            return TaskResult(
+                status=TaskStatus.SUCCESS,
+                message="全部成功",
+                data={"n": 5},
+                success_count=4,
+                failure_count=0,
+                total_count=4,
+            )
+
+        result = await execute_task_with_logging("任务", impl)
+        assert result.status == TaskStatus.SUCCESS
+        assert result.message == "全部成功"
+        assert result.data == {"n": 5}
+        assert result.success_count == 4
+

@@ -15,9 +15,11 @@ from models import (
 from services.mihoyo_login_api import (
     close_session,
     create_qr_login,
+    get_cookie_account_info_by_stoken,
     query_qr_login,
 )
 from services.common import get_game_record
+from services.myb_missions_api import get_missions
 from utils import generate_device_id, generate_qr_img, logger, push
 from config.task_logger import execute_task_with_logging, TaskResult, TaskStatus
 
@@ -162,10 +164,11 @@ async def build_and_validate_account(
     poll_result: QrLoginPollResult,
     session: LoginSession,
 ) -> Union[UserAccount, TaskResult]:
-    """从轮询结果构建 UserAccount 并验证凭据有效性。
+    """从轮询结果归一化并构建 UserAccount。
 
-    验证要求：必须包含账号标识、cookie_token 和 stoken。App QR 可能只在 body
-    返回 tokens/user_info 而空缺 Set-Cookie，此时需要合并轮询结果中的 body 字段。
+    仅负责把 Set-Cookie、body tokens 和 user_info 合并为 BBSCookies 并做字段级别
+    校验。App QR 通常只在 body 返回 ``stoken`` 和 ``user_info``，此时 ``cookie_token``
+    需要通过 :func:`get_cookie_account_info_by_stoken` 单独兑换，本函数不再伪造它。
     """
     raw_cookies = dict(poll_result.cookies)
     if not raw_cookies and not poll_result.tokens:
@@ -186,12 +189,21 @@ async def build_and_validate_account(
 
     if not bbs_uid:
         return _failed_result("扫码成功，但登录凭据不完整：缺少账号标识")
-    if not cookies.cookie_token and not cookies.cookie_token_v2:
-        return _failed_result("扫码成功，但登录凭据不完整：缺少 cookie_token")
     if not cookies.stoken:
         return _failed_result("扫码成功，但登录凭据不完整：缺少 stoken")
 
     cookies.bbs_uid = bbs_uid
+
+    if not cookies.cookie_token and not cookies.cookie_token_v2:
+        if session.provider == QrLoginProvider.APP:
+            # App QR：确认响应通常只含 stoken + user_info，需要单独兑换 cookie_token
+            exchange_result = await _exchange_app_qr_token(cookies, session)
+            if isinstance(exchange_result, TaskResult):
+                return exchange_result
+            cookies = exchange_result
+        else:
+            # Web QR 默认链路应直接携带 cookie_token，缺失则交由上层回退或报错
+            return _failed_result("扫码成功，但登录凭据不完整：缺少 cookie_token")
 
     account = UserAccount(
         phone_number=None,
@@ -203,36 +215,93 @@ async def build_and_validate_account(
     return account
 
 
+async def _exchange_app_qr_token(
+    cookies: BBSCookies,
+    session: LoginSession,
+) -> Union[BBSCookies, TaskResult]:
+    """App QR 兑换 cookie_token。成功返回补全后的 BBSCookies，失败返回 TaskResult。"""
+    if not cookies.mid:
+        return _failed_result("App QR 登录失败：缺少 mid，无法兑换 cookie_token")
+
+    status, cookie_token = await get_cookie_account_info_by_stoken(
+        cookies, device_id=session.device_id, retry=False
+    )
+    if not status.success or not cookie_token:
+        if status.network_error:
+            return _failed_result("App QR 登录失败：兑换 cookie_token 网络异常，请稍后重试")
+        if status.login_expired:
+            return _failed_result("App QR 登录失败：凭据已过期或无效，无法完成登录")
+        return _failed_result("App QR 登录失败：无法通过 stoken 兑换 cookie_token")
+
+    cookies.cookie_token = cookie_token
+    return cookies
+
+
 async def verify_credentials(account: UserAccount) -> Union[None, TaskResult]:
-    """调用账号/角色接口验证凭据真实有效。返回 None 表示通过。"""
+    """验证凭据真实有效，返回 None 表示通过。
+
+    Web QR 与 App QR 共用同一套验证：先检查游戏角色接口能力，再检查米游币社区
+    只读接口能力。任一验证返回登录失效、非成功状态、结构错误或网络错误都视为失败，
+    且网络错误与凭据失效返回不同的可诊断错误。只有两步都通过才允许后续落盘，因此
+    旧的已绑定账号不会被不可用凭据覆盖。
+    """
+    # 1. 游戏角色接口能力
     try:
-        status, _records = await get_game_record(account, retry=False)
+        game_status, _records = await get_game_record(account, retry=False)
     except Exception as e:
-        logger.error(f"凭据验证请求异常: {e}")
-        return _failed_result("凭据验证请求失败，请稍后重试")
+        logger.error(f"游戏角色接口验证请求异常: {e}")
+        return _failed_result("凭据验证请求失败（游戏角色），请稍后重试")
+
+    if game_status.login_expired:
+        return _failed_result("新凭据已过期或无效，无法完成登录（游戏角色）")
+    if not game_status.success:
+        if game_status.network_error:
+            return _failed_result("凭据验证网络异常（游戏角色），请稍后重试")
+        return _failed_result("凭据验证失败（游戏角色），请稍后重试")
+
+    # 2. 米游币社区只读接口能力
+    community_status = await _verify_community_access(account)
+    if community_status is not None:
+        return community_status
+
+    return None
+
+
+async def _verify_community_access(account: UserAccount) -> Union[None, TaskResult]:
+    """检查 stoken + cookie_token 组合可用于米游币社区任务。返回 None 表示通过。"""
+    try:
+        status, _missions = await get_missions(account, retry=False)
+    except Exception as e:
+        logger.error(f"米游币社区接口验证请求异常: {e}")
+        return _failed_result("凭据验证请求失败（米游币社区），请稍后重试")
 
     if status.login_expired:
-        return _failed_result("新凭据已过期或无效，无法完成登录")
+        return _failed_result("新凭据已过期或无效，无法完成登录（米游币社区）")
     if not status.success:
-        return _failed_result("凭据验证失败，请稍后重试")
+        if status.network_error:
+            return _failed_result("凭据验证网络异常（米游币社区），请稍后重试")
+        return _failed_result("凭据验证失败（米游币社区），请稍后重试")
     return None
 
 
 async def persist_account(account: UserAccount, bbs_uid: str) -> Union[None, TaskResult]:
     """原子写入配置。已有账号保留原有 device_id_ios/device_fp，只更新 cookies。
 
-    先备份内存配置，写入失败时回滚，避免全局状态被污染。
+    在任何 ``users`` / ``accounts`` 变更前深拷贝完整 ``ConfigData``；保存失败时恢复
+    完整快照，确保新 UID、空 ``UserData``、账号对象和已有配置均不残留。保存成功后才
+    向上层返回成功。
     """
     import copy
     from models import UserData
+
+    # 在任何变更前先备份完整内存配置
+    backup = copy.deepcopy(ConfigDataManager.config_data)
 
     if bbs_uid not in ConfigDataManager.config_data.users:
         ConfigDataManager.config_data.users[bbs_uid] = UserData()
 
     user_data = ConfigDataManager.config_data.users[bbs_uid]
     existing = user_data.accounts.get(bbs_uid)
-
-    backup = copy.deepcopy(ConfigDataManager.config_data)
 
     if existing:
         existing.cookies = account.cookies

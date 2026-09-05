@@ -67,8 +67,8 @@ def get_new_session(**kwargs) -> httpx.Client:
     """创建 HTTP 客户端实例"""
     import httpx
 
+    kwargs.setdefault("timeout", 30)
     return httpx.Client(
-        timeout=30,
         transport=httpx.HTTPTransport(retries=3),
         follow_redirects=True,
         **kwargs,

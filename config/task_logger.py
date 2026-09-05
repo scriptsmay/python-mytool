@@ -155,16 +155,45 @@ async def execute_task_with_logging(
             result = await task_func(*args, **kwargs)
 
             if isinstance(result, TaskResult):
-                # 用 TaskResult 更新 TaskLogger 的计数器，保持统计一致
-                if result.status == TaskStatus.SUCCESS:
-                    task_logger.log_success(result.message)
-                elif result.status == TaskStatus.FAILED:
-                    task_logger.log_failure(result.message)
-                elif result.status == TaskStatus.PARTIAL_SUCCESS:
-                    task_logger.success_count += result.success_count
-                    task_logger.failure_count += result.failure_count
-                    task_logger.total_count += result.total_count
-                return task_logger.get_result()
+                # 以返回的 TaskResult 为权威结果合并，保留原始 status/message/data/计数。
+                if result.status == TaskStatus.PARTIAL_SUCCESS:
+                    # 明确校验成功+失败==总数，不一致返回可诊断错误而非降级为 SKIPPED
+                    if (
+                        result.success_count + result.failure_count
+                        != result.total_count
+                    ):
+                        return TaskResult(
+                            status=TaskStatus.FAILED,
+                            message=(
+                                f"任务 '{task_name}' 返回 PARTIAL_SUCCESS 但计数不一致"
+                                f"（成功 {result.success_count} + 失败 {result.failure_count}"
+                                f" != 总数 {result.total_count}）"
+                            ),
+                            data=result.data,
+                        )
+
+                # 仅当返回的计数缺省时，按一次顶层任务事件补齐计数
+                if result.total_count == 0:
+                    if result.status == TaskStatus.SUCCESS:
+                        task_logger.log_success(result.message)
+                    elif result.status == TaskStatus.FAILED:
+                        task_logger.log_failure(result.message)
+                    elif result.status == TaskStatus.PARTIAL_SUCCESS:
+                        task_logger.log_success(result.message)
+                        task_logger.log_failure(result.message)
+                    summary = task_logger.get_result()
+                    merged = TaskResult(
+                        status=result.status,
+                        message=result.message,
+                        data=result.data,
+                        success_count=summary.success_count,
+                        failure_count=summary.failure_count,
+                        total_count=summary.total_count,
+                    )
+                    return merged
+
+                # 计数完整：原样返回业务数据，不重新压缩成一条事件
+                return result
             if isinstance(result, str):
                 task_logger.log_failure(result)
             else:

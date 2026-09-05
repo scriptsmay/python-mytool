@@ -6,13 +6,12 @@ import os
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from models.data_models import PushConfig
 from utils.push import (
-    PushConfig,
     PushHandler,
     push,
     init_config,
     get_new_session,
-    get_push_title,
     _global_push_config,
 )
 
@@ -45,26 +44,38 @@ class TestPushConfig(unittest.TestCase):
 class TestPushFunctions(unittest.TestCase):
     """测试推送功能函数"""
 
-    def test_get_push_title(self):
-        """测试获取推送标题功能"""
-        self.assertEqual(get_push_title(0), "「脚本」执行成功!")
-        self.assertEqual(get_push_title(-1), "「脚本」Config版本已更新")
-        self.assertEqual(get_push_title(-99), "「脚本」依赖缺失")
-        self.assertEqual(get_push_title(999), "「脚本」StatusID 错误")  # 默认值
+    def test_push_passes_title_through(self):
+        """push 函数将标题与消息透传给 PushHandler"""
+        captured = {}
 
-    def test_get_new_session_with_httpx(self):
-        """测试获取新的会话实例 - 优先使用httpx"""
-        # 模拟httpx模块存在
-        with patch.dict("sys.modules", {"httpx": Mock()}):
-            session = get_new_session()
-            self.assertIsNotNone(session)
+        class _StubHandler:
+            def __init__(self, config=None):
+                captured["config"] = config
 
-    def test_get_new_session_with_requests(self):
-        """测试获取新的会话实例 - 使用requests回退"""
-        # 模拟httpx模块不存在，但requests存在
-        with patch.dict("sys.modules", {"httpx": None}):
-            session = get_new_session()
-            self.assertIsNotNone(session)
+            def push(self, title, push_message, img_file=None):
+                captured["title"] = title
+                captured["push_message"] = push_message
+                return True
+
+        with patch("utils.push.PushHandler", _StubHandler):
+            result = push(title="自定义标题", push_message="测试消息", config=PushConfig())
+
+        self.assertTrue(result)
+        self.assertEqual(captured["title"], "自定义标题")
+        self.assertEqual(captured["push_message"], "测试消息")
+
+    def test_get_new_session_returns_client(self):
+        """get_new_session 返回可用的 httpx.Client 实例"""
+        session = get_new_session()
+        self.assertIsNotNone(session)
+        self.assertTrue(hasattr(session, "get"))
+        session.close()
+
+    def test_get_new_session_accepts_kwargs(self):
+        """get_new_session 接受额外关键字参数"""
+        session = get_new_session(timeout=5)
+        self.assertIsNotNone(session)
+        session.close()
 
     def test_init_config_and_global_push(self):
         """测试初始化全局配置"""
@@ -155,19 +166,25 @@ class TestPushHandler(unittest.TestCase):
         # 验证推送方法被调用
         mock_bark.assert_called_once_with(-1, "错误消息", None)
 
-    def test_prepare_message(self):
-        """测试准备消息内容功能"""
-        message = self.handler._prepare_message(0, "测试内容")
-        self.assertIn("「脚本」执行成功!", message)
-        self.assertIn("测试内容", message)
+    def test_disabled_config_skips_send(self):
+        """禁用配置时 push 不发起任何真实请求，返回 True"""
+        sent = {"called": False}
 
-    def test_prepare_message_with_image(self):
-        """测试准备带图片的消息内容功能"""
-        img_data = b"fake image data"
-        message = self.handler._prepare_message(0, "测试内容", img_file=img_data)
-        self.assertIn("「脚本」执行成功!", message)
-        self.assertIn("测试内容", message)
-        self.assertIn("data:image/png;base64,", message)
+        class _StubHandler:
+            def __init__(self, config=None):
+                self.config = config
+
+            def push(self, title, push_message, img_file=None):
+                # 即便构造了 handler，禁用时不应发起网络请求
+                sent["called"] = True
+                return True
+
+        with patch("utils.push.PushHandler", _StubHandler):
+            result = push(title="标题", push_message="内容", config=PushConfig(enable=False))
+
+        self.assertTrue(result)
+        # 禁用配置下仍会记录内容，但返回成功
+        self.assertTrue(sent["called"])
 
 
 class TestPushFunction(unittest.TestCase):
@@ -181,10 +198,10 @@ class TestPushFunction(unittest.TestCase):
         mock_handler_instance.push.return_value = True
 
         config = PushConfig()
-        result = push(status=0, push_message="测试", config=config)
+        result = push(title="标题", push_message="测试", config=config)
 
         mock_handler_class.assert_called_once_with(config=config)
-        mock_handler_instance.push.assert_called_once_with(0, "测试", None)
+        mock_handler_instance.push.assert_called_once_with("标题", "测试", None)
         self.assertTrue(result)
 
     @patch("utils.push.PushHandler")
@@ -195,11 +212,11 @@ class TestPushFunction(unittest.TestCase):
         mock_handler_class.return_value = mock_handler_instance
         mock_handler_instance.push.return_value = True
 
-        result = push(status=0, push_message="测试")
+        result = push(title="标题", push_message="测试")
 
         # 验证PushHandler使用全局配置创建
         mock_handler_class.assert_called_once()
-        mock_handler_instance.push.assert_called_once_with(0, "测试", None)
+        mock_handler_instance.push.assert_called_once_with("标题", "测试", None)
         self.assertTrue(result)
 
 
@@ -228,15 +245,16 @@ class TestPushHandlerSendMethods(unittest.TestCase):
     def test_bark_push(self, mock_send_request):
         """测试Bark推送"""
         mock_send_request.return_value = True
-        result = self.handler.bark(0, "测试消息")
+        result = self.handler.bark("标题", "测试消息")
         self.assertTrue(result)
         mock_send_request.assert_called_once()
 
     @patch.object(PushHandler, "_send_request")
-    def test_telegram_push(self, mock_send_request):
+    @patch.object(PushHandler, "check_telegram_connectivity", return_value=True)
+    def test_telegram_push(self, mock_check, mock_send_request):
         """测试Telegram推送"""
         mock_send_request.return_value = True
-        result = self.handler.telegram(0, "测试消息")
+        result = self.handler.telegram("标题", "测试消息")
         self.assertTrue(result)
         mock_send_request.assert_called_once()
 

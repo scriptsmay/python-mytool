@@ -1,15 +1,27 @@
 import http.cookies
+from typing import Optional, Tuple
 
 import httpx
+import tenacity
 
 from config import logger
 from models import (
+    BBSCookies,
+    GetCookieStatus,
     QrCodeChallenge,
     QrLoginPollResult,
     QrLoginProvider,
     QrLoginState,
     LoginSession,
+    project_config,
 )
+from services.common import (
+    ApiResultHandler,
+    get_async_retry,
+    is_incorrect_return,
+    HEADERS_PASSPORT_API,
+)
+from utils import generate_device_id
 
 URL_CREATE_QR_LOGIN = (
     "https://passport-api.mihoyo.com/account/ma-cn-passport/{}/createQRLogin"
@@ -156,3 +168,66 @@ async def query_qr_login(
         retcode=body.get("retcode"),
         message=body.get("message"),
     )
+
+
+URL_COOKIE_ACCOUNT_INFO_BY_STOKEN = (
+    "https://passport-api.mihoyo.com/account/auth/api/getCookieAccountInfoBySToken"
+)
+
+
+async def get_cookie_account_info_by_stoken(
+    cookies: BBSCookies, device_id: str = None, retry: bool = True
+) -> Tuple[GetCookieStatus, Optional[str]]:
+    """
+    App QR 凭据兑换：用确认响应中的 stoken + uid/aid 和 mid 换取 cookie_token。
+
+    仅在响应 ``retcode == 0`` 且返回非空 ``cookie_token`` 时视为成功；缺失或
+    错误响应返回明确的失败状态。token、ticket 和原始响应一律不写入普通或 debug 日志。
+
+    :param cookies: 米游社 Cookies，需要包含 stoken 和 mid
+    :param device_id: X_RPC_DEVICE_ID
+    :param retry: 是否允许重试
+    :return: (兑换状态, cookie_token 或 None)
+    """
+    if not cookies.stoken:
+        return GetCookieStatus(missing_stoken=True), None
+    if not cookies.mid:
+        return GetCookieStatus(missing_mid=True), None
+
+    headers = HEADERS_PASSPORT_API.copy()
+    headers["x-rpc-device_id"] = device_id if device_id else generate_device_id()
+    headers["x-rpc-app_id"] = "ddxf5dufpuyo"
+
+    try:
+        async for attempt in get_async_retry(retry):
+            with attempt:
+                async with httpx.AsyncClient() as client:
+                    res = await client.get(
+                        URL_COOKIE_ACCOUNT_INFO_BY_STOKEN,
+                        cookies=cookies.dict(v2_stoken=True, cookie_type=True),
+                        headers=headers,
+                        timeout=project_config.preference.timeout,
+                    )
+                api_result = ApiResultHandler.from_response(res.json())
+                if api_result.success:
+                    cookie_token = (api_result.data or {}).get("cookie_token")
+                    if not cookie_token:
+                        logger.warning("通过 stoken 兑换 cookie_token: 响应缺少 cookie_token")
+                        return GetCookieStatus(missing_cookie_token=True), None
+                    return GetCookieStatus(success=True), cookie_token
+                elif api_result.login_expired:
+                    logger.warning("通过 stoken 兑换 cookie_token: 登录失效")
+                    return GetCookieStatus(login_expired=True), None
+                else:
+                    logger.warning("通过 stoken 兑换 cookie_token: 兑换失败")
+                    return GetCookieStatus(), None
+    except tenacity.RetryError as e:
+        if is_incorrect_return(e):
+            logger.exception("通过 stoken 兑换 cookie_token: 服务器没有正确返回")
+            return GetCookieStatus(incorrect_return=True), None
+        else:
+            logger.exception("通过 stoken 兑换 cookie_token: 网络请求失败")
+            return GetCookieStatus(network_error=True), None
+    except Exception:
+        logger.exception("通过 stoken 兑换 cookie_token: 请求异常")
+        return GetCookieStatus(network_error=True), None
