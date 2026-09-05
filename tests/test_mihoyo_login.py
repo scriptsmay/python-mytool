@@ -175,6 +175,52 @@ class TestQueryQrLogin:
         assert result.tokens.get("stoken") == "app-stoken"
         assert result.user_info.get("aid") == "12345"
 
+    @pytest.mark.asyncio
+    async def test_query_tokens_with_token_type_keys(self):
+        """tokens 元素为 {token_type, token} 形态时应按 1=stoken、2=ltoken 映射"""
+        session = _make_app(QrLoginProvider.APP)
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=_mock_response(
+            200,
+            {
+                "retcode": 0,
+                "data": {
+                    "status": "Confirmed",
+                    "tokens": [
+                        {"token_type": 1, "token": "v2_app-stoken"},
+                        {"token_type": 2, "token": "app-ltoken"},
+                    ],
+                    "user_info": {"aid": "12345", "mid": "m123"},
+                },
+            },
+        ))
+        with patch("services.mihoyo_login_api._ensure_client", return_value=mock_client):
+            result = await query_qr_login(session, "test-ticket")
+
+        assert result.tokens.get("stoken") == "v2_app-stoken"
+        assert result.tokens.get("ltoken") == "app-ltoken"
+
+    @pytest.mark.asyncio
+    async def test_query_tokens_unknown_token_type_ignored(self):
+        """tokens 元素 token_type 未知时应跳过且不抛异常"""
+        session = _make_app(QrLoginProvider.APP)
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=_mock_response(
+            200,
+            {
+                "retcode": 0,
+                "data": {
+                    "status": "Confirmed",
+                    "tokens": [{"token_type": 99, "token": "mystery"}],
+                },
+            },
+        ))
+        with patch("services.mihoyo_login_api._ensure_client", return_value=mock_client):
+            result = await query_qr_login(session, "test-ticket")
+
+        assert result.state == QrLoginState.CONFIRMED
+        assert result.tokens == {}
+
 
 class TestParseSetCookieHeaders:
     def test_multiple_cookies(self):

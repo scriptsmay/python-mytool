@@ -155,8 +155,21 @@ async def query_qr_login(
             raw_tokens = data["tokens"]
             if isinstance(raw_tokens, list):
                 for t in raw_tokens:
-                    if isinstance(t, dict) and "name" in t and "token" in t:
+                    if not isinstance(t, dict) or "token" not in t:
+                        continue
+                    # 实测响应存在两种形态：{name, token} 或 {token_type, token}，
+                    # token_type 1=stoken、2=ltoken
+                    if "name" in t:
                         tokens[t["name"]] = t["token"]
+                    elif "token_type" in t:
+                        type_map = {1: "stoken", 2: "ltoken"}
+                        name = type_map.get(t["token_type"])
+                        if name:
+                            tokens[name] = t["token"]
+                        else:
+                            logger.warning(f"未知的二维码登录 token_type={t['token_type']}")
+                    else:
+                        logger.warning(f"二维码登录 tokens 元素字段异常: {sorted(t.keys())}")
         if "user_info" in data and isinstance(data["user_info"], dict):
             user_info = {k: str(v) for k, v in data["user_info"].items()}
 

@@ -195,15 +195,12 @@ async def build_and_validate_account(
     cookies.bbs_uid = bbs_uid
 
     if not cookies.cookie_token and not cookies.cookie_token_v2:
-        if session.provider == QrLoginProvider.APP:
-            # App QR：确认响应通常只含 stoken + user_info，需要单独兑换 cookie_token
-            exchange_result = await _exchange_app_qr_token(cookies, session)
-            if isinstance(exchange_result, TaskResult):
-                return exchange_result
-            cookies = exchange_result
-        else:
-            # Web QR 默认链路应直接携带 cookie_token，缺失则交由上层回退或报错
-            return _failed_result("扫码成功，但登录凭据不完整：缺少 cookie_token")
+        # 确认响应可能只在 Set-Cookie（Web QR 常见）或 body tokens（App QR 常见）
+        # 携带部分凭据；只要 stoken + mid 齐全就兑换 cookie_token，不区分链路
+        exchange_result = await _exchange_stoken_for_cookie_token(cookies, session)
+        if isinstance(exchange_result, TaskResult):
+            return exchange_result
+        cookies = exchange_result
 
     account = UserAccount(
         phone_number=None,
@@ -215,23 +212,23 @@ async def build_and_validate_account(
     return account
 
 
-async def _exchange_app_qr_token(
+async def _exchange_stoken_for_cookie_token(
     cookies: BBSCookies,
     session: LoginSession,
 ) -> Union[BBSCookies, TaskResult]:
-    """App QR 兑换 cookie_token。成功返回补全后的 BBSCookies，失败返回 TaskResult。"""
+    """用 stoken + mid 兑换 cookie_token。成功返回补全后的 BBSCookies，失败返回 TaskResult。"""
     if not cookies.mid:
-        return _failed_result("App QR 登录失败：缺少 mid，无法兑换 cookie_token")
+        return _failed_result("扫码成功，但登录凭据不完整：缺少 mid，无法兑换 cookie_token")
 
     status, cookie_token = await get_cookie_account_info_by_stoken(
         cookies, device_id=session.device_id, retry=False
     )
     if not status.success or not cookie_token:
         if status.network_error:
-            return _failed_result("App QR 登录失败：兑换 cookie_token 网络异常，请稍后重试")
+            return _failed_result("兑换 cookie_token 网络异常，请稍后重试")
         if status.login_expired:
-            return _failed_result("App QR 登录失败：凭据已过期或无效，无法完成登录")
-        return _failed_result("App QR 登录失败：无法通过 stoken 兑换 cookie_token")
+            return _failed_result("凭据已过期或无效，无法完成登录")
+        return _failed_result("扫码成功，但无法通过 stoken 兑换 cookie_token")
 
     cookies.cookie_token = cookie_token
     return cookies
