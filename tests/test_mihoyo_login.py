@@ -824,3 +824,94 @@ class TestBuildLoginSession:
         assert session.client_type == "1"
         assert "Mozilla" in session.user_agent
 
+
+class TestGameSignFailureReporting:
+    """游戏签到失败正确上报：login_expired / get_game_record 失败 / 计数修正"""
+
+    def _make_user(self):
+        """构造含单账号的最小 UserData"""
+        from models.data_models import UserData, UserAccount, BBSCookies
+        account = UserAccount(
+            phone_number=None,
+            cookies=BBSCookies(),
+            device_id_ios="ios-dev",
+            device_id_android="android-dev",
+        )
+        account.bbs_uid = "uid001"
+        user = UserData()
+        user.accounts = {"uid001": account}
+        return user
+
+    @pytest.mark.asyncio
+    async def test_process_account_game_sign_login_expired_returns_false_and_adds_msg(self):
+        """get_game_record 返回 login_expired 时：返回 False，msgs_list 收到错误消息"""
+        from core.game import _process_account_game_sign
+
+        msgs: list = []
+        expired_status = BaseApiStatus(login_expired=True)
+        user = self._make_user()
+        account = list(user.accounts.values())[0]
+
+        with patch("core.game.get_game_record", return_value=(expired_status, [])):
+            result = await _process_account_game_sign(account, user, msgs)
+
+        assert result is False
+        assert len(msgs) == 1
+        assert "过期" in msgs[0] or "凭据" in msgs[0]
+
+    @pytest.mark.asyncio
+    async def test_process_account_game_sign_other_failure_returns_false_and_adds_msg(self):
+        """get_game_record 返回非 login_expired 的失败时：返回 False，msgs_list 收到错误消息"""
+        from core.game import _process_account_game_sign
+
+        msgs: list = []
+        fail_status = BaseApiStatus(success=False)
+        user = self._make_user()
+        account = list(user.accounts.values())[0]
+
+        with patch("core.game.get_game_record", return_value=(fail_status, [])):
+            result = await _process_account_game_sign(account, user, msgs)
+
+        assert result is False
+        assert len(msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_attempt_sign_login_expired_returns_hard_failure_and_adds_msg(self):
+        """sign() 返回 login_expired 时：_attempt_sign 返回 True 且追加消息"""
+        from core.game import _attempt_sign
+        from models.data_models import UserData, UserAccount, BBSCookies
+        from unittest.mock import MagicMock
+
+        msgs: list = []
+        expired_status = BaseApiStatus(login_expired=True)
+
+        signer = MagicMock()
+        signer.sign = AsyncMock(return_value=(expired_status, None))
+        signer.name = "原神"
+        signer.record = MagicMock(nickname="n", level=60)
+
+        account = UserAccount(
+            phone_number=None,
+            cookies=BBSCookies(),
+            device_id_ios="x",
+            device_id_android="y",
+        )
+        user = UserData()
+
+        result = await _attempt_sign(signer, account, user, msgs, "游戏(原神)")
+
+        assert result is True
+        assert len(msgs) == 1
+        assert "登录失效" in msgs[0] or "过期" in msgs[0] or "重新登录" in msgs[0]
+
+    @pytest.mark.asyncio
+    async def test_game_sign_impl_raises_when_all_accounts_fail(self):
+        """全部账号均失败时 _game_sign_impl 抛出 RuntimeError（run_task 可捕获并计为失败）"""
+        from core.game import _game_sign_impl
+
+        user = self._make_user()
+        fail_status = BaseApiStatus(login_expired=True)
+
+        with patch("core.game.get_game_record", return_value=(fail_status, [])):
+            with pytest.raises(RuntimeError):
+                await _game_sign_impl(user)

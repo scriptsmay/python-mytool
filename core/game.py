@@ -137,28 +137,42 @@ async def _game_sign_impl(user: UserData) -> str:
         user (UserData): 单个用户数据
 
     Returns:
-        str: 执行结果消息
+        str: 执行结果消息；若全部账号签到失败则抛出 RuntimeError
     """
     msgs_list = []
+    any_success = False
 
     for j, account in enumerate(user.accounts.values(), start=1):
         logger.info(f"⏳开始执行游戏签到...")
-        await _process_account_game_sign(account, user, msgs_list)
-        logger.info(f"✅游戏角色签到完成")
+        success = await _process_account_game_sign(account, user, msgs_list)
+        if success:
+            any_success = True
+            logger.info(f"✅游戏角色签到完成")
+        else:
+            logger.warning(f"❌游戏角色签到失败")
 
-    return _format_result(msgs_list, "")
+    result = _format_result(msgs_list, "")
+    if not any_success:
+        raise RuntimeError(result)
+    return result
+
 
 
 async def _process_account_game_sign(
     account: UserAccount,
     user: UserData,
     msgs_list: List[str],
-) -> None:
-    """处理单个账户的游戏签到"""
+) -> bool:
+    """处理单个账户的游戏签到，返回 True 表示至少完成了一个游戏的签到流程"""
     game_record_status, records = await get_game_record(account)
     if not game_record_status:
-        logger.warning(f"⚠️ 获取游戏账号信息失败，请重新尝试")
-        return
+        if game_record_status.login_expired:
+            msg = "⚠️ 账号凭据已过期，请重新运行登录任务绑定账户"
+        else:
+            msg = "⚠️ 获取游戏账号信息失败，请重新尝试"
+        logger.warning(msg)
+        msgs_list.append(msg)
+        return False
 
     games_with_record = [
         class_type(account, records)
@@ -169,7 +183,7 @@ async def _process_account_game_sign(
     if not games_with_record:
         message = f"⚠️ 用户不存在任何游戏账号，已跳过签到"
         msgs_list.append(message)
-        return
+        return False
 
     for k, signer in enumerate(games_with_record, start=1):
         if signer.en_name not in account.game_sign_games:
@@ -178,6 +192,8 @@ async def _process_account_game_sign(
         logger.info(f"⏳开始为{game_detail}执行签到...")
         await _process_single_game_sign(signer, account, user, msgs_list, game_detail)
         logger.info(f"✅{game_detail}签到完成")
+    return True
+
 
 
 async def _process_single_game_sign(
@@ -191,12 +207,14 @@ async def _process_single_game_sign(
     get_info_status, info = await signer.get_info(account.platform)
     signed = info.is_sign if get_info_status else False
 
-    # 尝试签到
+    # 尝试签到，返回 True 表示出现硬失败（已记录消息，无需再查结果）
+    hard_failure = False
     if not get_info_status or not signed:
-        await _attempt_sign(signer, account, user, msgs_list, game_detail)
+        hard_failure = await _attempt_sign(signer, account, user, msgs_list, game_detail)
 
-    # 获取签到结果
-    await _process_sign_result(signer, account, msgs_list, signed, game_detail)
+    # 硬失败（login_expired 等）时跳过结果查询，避免重复报错
+    if not hard_failure:
+        await _process_sign_result(signer, account, msgs_list, signed, game_detail)
 
 
 async def _attempt_sign(
@@ -205,16 +223,23 @@ async def _attempt_sign(
     user: UserData,
     msgs_list: List[str],
     game_detail: str,
-) -> None:
-    """尝试进行签到"""
+) -> bool:
+    """尝试进行签到，返回 True 表示出现硬失败（已向 msgs_list 追加错误信息）"""
     sign_status, mmt_data = await signer.sign(account.platform)
 
+    hard_failure = False
     if sign_status.need_verify:
         await _handle_verification(
             signer, account, user, mmt_data, msgs_list, game_detail
         )
+    elif not sign_status:
+        # login_expired / network error / 其他硬失败，立即记录，无需继续查结果
+        _handle_sign_failure(signer, account, sign_status, msgs_list, game_detail)
+        hard_failure = True
 
     await asyncio.sleep(project_config.preference.sleep_time)
+    return hard_failure
+
 
 
 async def _handle_verification(
