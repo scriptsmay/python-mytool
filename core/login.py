@@ -46,17 +46,16 @@ def _build_login_session() -> LoginSession:
     if project_config.preference.qrcode_provider == "app":
         provider = QrLoginProvider.APP
 
+    is_app = provider == QrLoginProvider.APP
     return LoginSession(
         provider=provider,
         device_id=generate_device_id(),
-        app_id="bll8iq97cem8",
-        client_type="1",
-        user_agent=(
+        app_id="ddxf5dufpuyo" if is_app else "bll8iq97cem8",
+        client_type="3" if is_app else "1",
+        user_agent="HYPContainer/1.3.3.182" if is_app else (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/605.1.15 (KHTML, like Gecko) "
             "Version/16.0 Safari/605.1.15"
-            if provider == QrLoginProvider.WEB
-            else "HYPContainer/1.3.3.182"
         ),
     )
 

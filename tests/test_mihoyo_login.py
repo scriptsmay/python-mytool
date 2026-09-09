@@ -791,3 +791,36 @@ class TestTaskResultMerge:
         assert result.data == {"n": 5}
         assert result.success_count == 4
 
+
+class TestBuildLoginSession:
+    """测试 LoginSession 构建及 Preference 默认行为"""
+
+    def test_default_preference_uses_app_and_fallback(self):
+        from models.data_models import Preference
+
+        pref = Preference()
+        assert pref.qrcode_provider == "app"
+        assert pref.qrcode_app_fallback is True
+
+    def test_build_login_session_app(self, monkeypatch):
+        from core.login import _build_login_session
+        from models import project_config
+
+        monkeypatch.setattr(project_config.preference, "qrcode_provider", "app")
+        session = _build_login_session()
+        assert session.provider == QrLoginProvider.APP
+        assert session.app_id == "ddxf5dufpuyo"
+        assert session.client_type == "3"
+        assert session.user_agent == "HYPContainer/1.3.3.182"
+
+    def test_build_login_session_web(self, monkeypatch):
+        from core.login import _build_login_session
+        from models import project_config
+
+        monkeypatch.setattr(project_config.preference, "qrcode_provider", "web")
+        session = _build_login_session()
+        assert session.provider == QrLoginProvider.WEB
+        assert session.app_id == "bll8iq97cem8"
+        assert session.client_type == "1"
+        assert "Mozilla" in session.user_agent
+

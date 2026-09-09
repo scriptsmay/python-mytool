@@ -590,8 +590,8 @@ class Preference(BaseModel):
     game_token_app_id: str = "2"
     qrcode_query_interval: float = 1
     qrcode_wait_time: float = 120
-    qrcode_provider: str = "web"
-    qrcode_app_fallback: bool = False
+    qrcode_provider: str = "app"
+    qrcode_app_fallback: bool = True
     myb_sign_enabled: bool = True
     """讨论区签到开关：米哈游 bbs-api signIn 鉴权失效期间可关闭，仅跳过签到子任务"""
     resin_interval: int = 30

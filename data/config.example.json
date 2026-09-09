@@ -20,7 +20,10 @@
         "override_device_and_salt": false,
         "game_token_app_id": "2",
         "qrcode_query_interval": 1,
-        "qrcode_wait_time": 120
+        "qrcode_wait_time": 120,
+        "qrcode_provider": "app",
+        "qrcode_app_fallback": true,
+        "myb_sign_enabled": false
     },
     "users": {
         "USERID_XXXXX": {
