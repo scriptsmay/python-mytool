@@ -954,8 +954,12 @@ class ConfigData(BaseModel):
     # 用户数据
     users: Dict[str, UserData] = Field(default_factory=dict)
 
-    # 微博cookie
+    # 微博cookie（App 抓包参数串，多账号用 # 分隔）
     weibo_cookie: Optional[str] = Field(default=None)
+    # 超话签到白名单：containerid（100808...）或名称（可带/不带「超话」后缀）；留空 = 签所有已关注超话
+    weibo_topics: Optional[List[str]] = Field(default=None)
+    # 超话签到之间的随机延迟秒数区间 [min, max]；[0, 0] = 不延迟。默认 3~8 秒
+    weibo_sign_delay: Optional[List[float]] = Field(default_factory=lambda: [3.0, 8.0])
 
     model_config = ConfigDict(extra="ignore")
 

@@ -10,6 +10,23 @@ pip install -r requirements.txt
 
 数据文件存放在 `data/config.json` 中。
 
+## 微博超话签到（ql_wb.py）
+
+### 配置项（data/config.json）
+
+- `weibo_cookie`：微博 App 抓包参数串（`s`/`gsid`/`aid`/`from`/`ua`/...），多账号用 `#` 分隔。
+- `weibo_topics`（可选）：超话白名单。可填 containerid（`100808...`）或超话名（带/不带「超话」后缀均可），留空 = 签所有已关注超话。建议只填 wbox 活动清单内的 3 个，减少风控面。
+- `weibo_sign_delay`（可选）：签到之间随机延迟秒数区间 `[min, max]`，默认 `[3, 8]`；`[0, 0]` = 不延迟。账号之间建议再 stagger cron 时间。
+
+### 账号识别
+
+脚本启动时会用 `/2/users/show` 取当前登录账号的 uid + 昵称并打印到日志（`👤 昵称(uid)`），便于多账号排查。如果这个探针失败，说明 token 已失效，整轮会告警推送。
+
+### 注意
+
+- `s`/`gsid` 是按号派生的会话凭据，**不要提交到 git**，只放 `data/config.json`（已在 `.gitignore`）。
+- 签到在微博凌晨重置后立刻执行（00:05）；签到档只签清单内超话，`auto_follow` 仍需在浏览器侧完成一次关注。
+
 ## Run
 
 ```

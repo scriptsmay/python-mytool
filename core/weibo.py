@@ -1,6 +1,8 @@
 import re
+import random
+import time
 import asyncio
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Tuple, Union
 
 from bs4 import BeautifulSoup
 import urllib3
@@ -21,6 +23,9 @@ from config.task_logger import execute_task_with_logging, TaskResult, TaskLogger
 # 禁用SSL警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# 微博 App 网关（鉴权只靠参数串里的 s/gsid，不发 Cookie 头）
+API_BASE = "https://api.weibo.cn/2"
+
 
 class WeiboSign:
     """微博签到类"""
@@ -40,6 +45,82 @@ class WeiboSign:
         self.user_agent = "WeiboOverseas/4.4.6 (iPhone; iOS 14.0.1; Scale/2.00)"
         self.headers = {"User-Agent": self.user_agent}
         self._follow_data = []
+        self._profile: Optional[Dict[str, Any]] = None
+        # 白名单（空 = 签全部已关注超话）与签到间隔（秒），来自 config.json
+        self._allow = self._load_allowlist()
+        self._delay = self._load_delay()
+
+    # ---------- 账号识别 / 配置 ----------
+
+    @staticmethod
+    def _norm_topic(value: Any) -> str:
+        """超话名归一化：去空白、去「超话」后缀、小写；containerid 原样小写。"""
+        s = re.sub(r"\s+", "", str(value or "")).lower()
+        suffix = "超话"
+        if s.endswith(suffix):
+            s = s[: -len(suffix)]
+        return s
+
+    def _load_allowlist(self) -> set:
+        raw = getattr(project_config, "weibo_topics", None) or []
+        if isinstance(raw, str):
+            raw = [x for x in re.split(r"[,;\n]", raw)]
+        return {self._norm_topic(x) for x in raw if str(x).strip()}
+
+    def _load_delay(self) -> Tuple[float, float]:
+        raw = getattr(project_config, "weibo_sign_delay", None)
+        try:
+            lo, hi = float(raw[0]), float(raw[1])
+        except (TypeError, ValueError, IndexError):
+            return (0.0, 0.0)
+        if lo < 0 or hi < lo:
+            return (0.0, 0.0)
+        return (lo, hi)
+
+    @property
+    def profile(self) -> Dict[str, Any]:
+        """当前登录账号资料。`/2/users/show` 不传 uid 时返回自己，顺带当 token 健康探针。"""
+        if self._profile is None:
+            resp = request_with_retry(
+                "GET",
+                f"{API_BASE}/users/show",
+                params=self.params,
+                headers=self.headers,
+                verify=False,
+            )
+            try:
+                data = resp.json()
+            except ValueError:
+                data = {}
+            if resp.status_code != 200 or not data.get("id"):
+                reason = data.get("errmsg") or data.get("errno") or f"HTTP {resp.status_code}"
+                raise Exception(f"账号资料获取失败（token 可能已失效）: {reason}")
+            self._profile = data
+        return self._profile
+
+    @property
+    def label(self) -> str:
+        """日志用的账号标识：昵称(uid)；拿不到时退化为「未知账号」。"""
+        if not self._profile:
+            return "未知账号"
+        return f"{self._profile.get('screen_name')}({self._profile.get('id')})"
+
+    @staticmethod
+    def _containerid(item: Dict[str, Any]) -> str:
+        """从卡片里取超话 containerid（scheme / action / openurl 三处兜底）。"""
+        for raw in (item.get("scheme"), item.get("action"), item.get("openurl")):
+            m = re.search(r"(?:containerid|pageid)=(\w+)", str(raw or ""))
+            if m:
+                return m.group(1)
+        return ""
+
+    def _allowed(self, follow: Dict[str, Any]) -> bool:
+        if not self._allow:
+            return True
+        cid = str(follow.get("containerid") or "").lower()
+        return bool(cid and cid in self._allow) or self._norm_topic(
+            follow.get("name")
+        ) in self._allow
 
     @property
     def follow_data(self) -> List[Dict[str, Any]]:
@@ -92,26 +173,52 @@ class WeiboSign:
                 "level": level,
                 "is_sign": nested_lookup(item, "name", fetch_first=True) != "签到",
                 "request_url": request_url,
+                "containerid": self._containerid(item),
             }
             self._follow_data.append(follow_info)
 
     async def sign_all(self) -> List[Dict[str, Any]]:
-        """执行所有签到"""
-        logger.info("⏳开始执行微博签到...")
+        """执行所有签到。
+
+        先做账号资料探针（拿不到 = token 失效，整轮直接失败，避免静默）；
+        再按 weibo_topics 白名单过滤；逐条签到之间带随机延迟（weibo_sign_delay）。
+        """
+        prof = self.profile  # token 失效会在这里抛
+        logger.info(
+            f"👤 {prof.get('screen_name')}({prof.get('id')}) 开始微博签到"
+            f"（关注超话 {len(self.follow_data)} 个）"
+        )
 
         if not self.follow_data:
-            logger.warning("没有找到关注列表，可能cookie无效")
+            logger.warning(f"[{self.label}] 没有找到关注列表，可能cookie无效")
             return []
 
+        targets = [f for f in self.follow_data if self._allowed(f)]
+        skipped = len(self.follow_data) - len(targets)
+        if self._allow:
+            logger.info(
+                f"[{self.label}] 白名单命中 {len(targets)} 个，跳过清单外 {skipped} 个"
+            )
+            if not targets:
+                logger.error(
+                    f"[{self.label}] 白名单没有命中任何已关注超话，检查 weibo_topics 配置"
+                )
+                return []
+
         result = []
-        for follow in self.follow_data:
+        attempted = 0
+        for follow in targets:
             if not follow["is_sign"] and follow["request_url"]:
+                lo, hi = self._delay
+                if attempted and hi > 0:
+                    time.sleep(random.uniform(lo, hi))
                 sign_result = await self._perform_sign(follow)
                 result.append(sign_result)
+                attempted += 1
             else:
                 result.append(follow)
 
-        logger.info(f"✅微博签到完成，处理了 {len(result)} 个超话")
+        logger.info(f"[{self.label}] 微博签到完成，处理了 {len(result)} 个超话")
         return result
 
     async def _perform_sign(self, follow: Dict[str, Any]) -> Dict[str, Any]:
@@ -132,6 +239,9 @@ class WeiboSign:
 
         if response.status_code != 200:
             follow["sign_response"] = {"error": f"HTTP {response.status_code}"}
+            logger.warning(
+                f"[{self.label}] ❌签到失败: {follow['name']}, 响应: {follow['sign_response']}"
+            )
             return follow
 
         data = response.json()
@@ -139,9 +249,9 @@ class WeiboSign:
         if data.get("result") == 1:
             follow["is_sign"] = True
             follow["request_url"] = None
-            logger.info(f"✅签到成功: {follow['name']}")
+            logger.info(f"[{self.label}] ✅签到成功: {follow['name']}")
         else:
-            logger.warning(f"❌签到失败: {follow['name']}, 响应: {data}")
+            logger.warning(f"[{self.label}] ❌签到失败: {follow['name']}, 响应: {data}")
 
         return follow
 
@@ -250,26 +360,27 @@ class WeiboSign:
         }
 
 
-async def single_weibo_sign(weibo_cookie: str) -> str:
-    """
-    执行单个微博账号签到任务
+async def single_weibo_sign(weibo_cookie: str) -> Tuple[str, bool]:
+    """执行单个微博账号签到。返回 (结果文本, 是否完全成功)。
 
-    Args:
-        weibo_cookie: 微博cookie字符串
-
-    Returns:
-        签到结果消息
+    完全成功 = token 有效 且（signed + already > 0）且失败数为 0。
+    任何失败都算作账号失败，便于上层推送告警，避免把失败藏起来。
     """
     try:
         weibo = WeiboSign(params=weibo_cookie)
         sign_results = await weibo.sign_all()
 
         if not sign_results:
-            return "❌ 没有找到需要签到的超话，可能cookie无效或已全部签到"
+            return (
+                f"👤 {weibo.label}\n"
+                "❌ 没有找到需要签到的超话（token 失效 / 未关注任何超话 / 白名单未命中）",
+                False,
+            )
 
-        messages = []
+        messages = [f"👤 {weibo.label}"]
         signed_count = 0
         already_signed_count = 0
+        failed_count = 0
 
         for result in sign_results:
             level = result["level"]
@@ -285,20 +396,25 @@ async def single_weibo_sign(weibo_cookie: str) -> str:
                 signed_count += 1
             else:
                 status = "❌"
+                failed_count += 1
 
             message = f"⚜️ [Lv.{level}] {name} {status}"
             messages.append(message)
 
-        summary = f"\n📊 总结: 成功签到 {signed_count} 个，已签到 {already_signed_count} 个，失败 {len(sign_results) - signed_count - already_signed_count} 个"
-        result_msg = "\n".join(messages) + summary
+        summary = (
+            f"\n📊 总结: 新签 {signed_count} 个，已签 {already_signed_count} 个，"
+            f"失败 {failed_count} 个（共 {len(sign_results)} 个）"
+        )
+        messages.append(summary)
+        text = "\n".join(messages)
 
-        logger.info(f"微博签到完成: {result_msg}")
-        return result_msg
+        logger.info(f"[{weibo.label}] {summary.strip()}")
+        return text, failed_count == 0 and (signed_count + already_signed_count) > 0
 
     except Exception as e:
-        error_msg = f"❌ 微博签到失败: {str(e)}"
-        logger.error(error_msg)
-        return error_msg
+        error_msg = f"❌ 微博签到失败: {e}"
+        logger.error(f"{error_msg}")
+        return error_msg, False
 
 
 async def _weibo_sign_impl() -> TaskResult:
@@ -311,39 +427,38 @@ async def _weibo_sign_impl() -> TaskResult:
             task_logger.log_failure("未配置微博cookie环境变量或config.json文件")
             return task_logger.get_result()
 
-        try:
-            # 运行微博任务
-            task_result = await run_task("微博超话签到", all_cookies, single_weibo_sign)
+        logger.info(f"您配置了 {len(all_cookies)} 个「微博超话签到」账号")
 
-            total_success_cnt = task_result[0]
-            total_failure_cnt = task_result[1]
-            task_name = task_result[2]
-            status_fmt = task_result[3]
-            message_content = task_result[4]
+        lines: List[str] = []
+        ok_cnt = 0
+        fail_cnt = 0
+        for i, raw in enumerate(all_cookies, start=1):
+            logger.info(f"准备执行第 {i} 个账号的任务...")
+            try:
+                text, ok = await single_weibo_sign(raw)
+            except Exception as e:
+                logger.exception(f"第 {i} 个账号执行失败")
+                text, ok = f"执行异常: {e}", False
+            if ok:
+                ok_cnt += 1
+            else:
+                fail_cnt += 1
+            lines.append(f"🌈 第{i}个账号:\n{text}\n")
 
-            if total_success_cnt == 0 and total_failure_cnt == 0:
-                task_logger.log_warning("没有有效的微博账号配置")
-                return task_logger.get_result()
+        if ok_cnt > 0:
+            task_logger.log_success(f"成功签到 {ok_cnt} 个账号")
+        if fail_cnt > 0:
+            task_logger.log_failure(f"失败 {fail_cnt} 个账号")
 
-            # 记录统计信息
-            if total_success_cnt > 0:
-                task_logger.log_success(f"成功签到 {total_success_cnt} 个账号")
-            if total_failure_cnt > 0:
-                task_logger.log_failure(f"失败 {total_failure_cnt} 个账号")
+        task_name = "🏆 微博超话签到"
+        status_fmt = f"✅ 成功: {ok_cnt} · ❌ 失败: {fail_cnt}"
+        content = f"{task_name} - {status_fmt}\n\n" + "\n".join(lines)
 
-            title = f"{task_name} - {status_fmt}"
-            content = f"{title}\n\n{message_content}"
+        task_logger.log_info(f"微博任务完成: {status_fmt}")
 
-            task_logger.log_info(f"微博任务完成: {status_fmt}")
-
-            result = task_logger.get_result()
-            result.message = content  # 使用详细的消息内容
-
-            return result
-
-        except Exception as e:
-            task_logger.log_failure(f"微博任务执行失败: {e}")
-            return task_logger.get_result()
+        result = task_logger.get_result()
+        result.message = content
+        return result
 
 
 async def manually_weibo_sign() -> TaskResult:
@@ -440,7 +555,7 @@ if __name__ == "__main__":
     cookie = "your_weibo_cookie_here"
 
     async def main():
-        result = await single_weibo_sign(cookie)
+        result, _ = await single_weibo_sign(cookie)
         print(result)
 
     asyncio.run(main())
