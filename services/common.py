@@ -1118,6 +1118,9 @@ async def get_cookie_token_by_stoken(
     >>> assert asyncio.new_event_loop().run_until_complete(coroutine)[0].success is False
     """
     headers = HEADERS_PASSPORT_API.copy()
+    # URL_COOKIE_TOKEN_BY_STOKEN 走 miyoushe 域名，Host 头必须匹配，
+    # 否则服务端返回 -464（请使用最新版本产品/链接）。
+    headers["Host"] = urlparse(URL_COOKIE_TOKEN_BY_STOKEN).netloc
     headers["x-rpc-device_id"] = device_id if device_id else generate_device_id()
     if not cookies.stoken_v2:
         return GetCookieStatus(missing_stoken_v2=True), None

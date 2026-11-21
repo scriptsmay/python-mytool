@@ -1,4 +1,5 @@
 import http.cookies
+from urllib.parse import urlparse
 from typing import Optional, Tuple
 
 import httpx
@@ -208,6 +209,9 @@ async def get_cookie_account_info_by_stoken(
         return GetCookieStatus(missing_mid=True), None
 
     headers = HEADERS_PASSPORT_API.copy()
+    # 兑换接口已迁移到 passport-api.miyoushe.com，Host 头必须同步，
+    # 否则服务端按旧 Host 判定为非官方链路，返回 -464。
+    headers["Host"] = urlparse(URL_COOKIE_ACCOUNT_INFO_BY_STOKEN).netloc
     headers["x-rpc-device_id"] = device_id if device_id else generate_device_id()
     headers["x-rpc-app_id"] = "ddxf5dufpuyo"
 

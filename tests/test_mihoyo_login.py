@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -548,6 +549,44 @@ def test_persist_account_rollback_on_disk_failure(tmp_path, monkeypatch):
 
 
 # ===================== ADR-002 新增测试 =====================
+
+
+class TestStokenExchangeHostHeader:
+    """兑换接口迁移到 miyoushe 域名后，Host 头必须同步，否则服务端返回 -464"""
+
+    def test_exchange_request_uses_new_domain_host(self):
+        from services.mihoyo_login_api import (
+            URL_COOKIE_ACCOUNT_INFO_BY_STOKEN,
+            get_cookie_account_info_by_stoken,
+        )
+        from services.common import URL_COOKIE_TOKEN_BY_STOKEN
+
+        async def run():
+            with patch(
+                "services.mihoyo_login_api.httpx.AsyncClient"
+            ) as client_cls:
+                client = client_cls.return_value.__aenter__.return_value
+                client.get = AsyncMock(
+                    return_value=httpx.Response(
+                        200,
+                        json={"retcode": -100, "message": "登录状态失效"},
+                    )
+                )
+                cookies = BBSCookies.from_login_cookie({
+                    "stoken": "v2_dummy", "mid": "m1", "account_id": "u1",
+                })
+                await get_cookie_account_info_by_stoken(
+                    cookies, device_id="d1", retry=False
+                )
+                return client.get.call_args.kwargs["headers"]["Host"]
+
+        assert asyncio.run(run()) == "passport-api.miyoushe.com"
+        assert URL_COOKIE_ACCOUNT_INFO_BY_STOKEN.startswith(
+            "https://passport-api.miyoushe.com/"
+        )
+        assert URL_COOKIE_TOKEN_BY_STOKEN.startswith(
+            "https://passport-api.miyoushe.com/"
+        )
 
 
 class TestAppQrTokenExchange:
