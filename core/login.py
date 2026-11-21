@@ -18,7 +18,7 @@ from services.mihoyo_login_api import (
     get_cookie_account_info_by_stoken,
     query_qr_login,
 )
-from services.common import get_game_record
+from services.common import get_game_record, get_ltoken_by_stoken
 from services.myb_missions_api import get_missions
 from utils import generate_device_id, generate_qr_img, logger, push
 from config.task_logger import execute_task_with_logging, TaskResult, TaskStatus
@@ -201,6 +201,20 @@ async def build_and_validate_account(
             return exchange_result
         cookies = exchange_result
 
+    # App QR 确认响应不下发 ltoken，但游戏角色等接口需要它；用 stoken + mid 补兑换。
+    # 失败时仅告警不阻断登录——cookie_token 已足以通过社区接口验证。
+    if not cookies.ltoken and not cookies.ltoken_v2:
+        ltoken_status, ltoken_cookies = await get_ltoken_by_stoken(
+            cookies, device_id=session.device_id, retry=False
+        )
+        if ltoken_status.success and ltoken_cookies and ltoken_cookies.ltoken:
+            cookies.ltoken = ltoken_cookies.ltoken
+        else:
+            logger.warning(
+                f"补兑换 ltoken 失败（{ltoken_status.error_type}），"
+                "部分游戏角色接口可能报登录失效"
+            )
+
     account = UserAccount(
         phone_number=None,
         cookies=cookies,
@@ -226,8 +240,10 @@ async def _exchange_stoken_for_cookie_token(
         if status.network_error:
             return _failed_result("兑换 cookie_token 网络异常，请稍后重试")
         if status.login_expired:
-            return _failed_result("凭据已过期或无效，无法完成登录")
-        return _failed_result("扫码成功，但无法通过 stoken 兑换 cookie_token")
+            detail = f"（{status.message}）" if status.message else ""
+            return _failed_result(f"扫码成功，但 stoken 已失效{detail}，请重新登录")
+        detail = f"（{status.message}）" if status.message else ""
+        return _failed_result(f"扫码成功，但无法通过 stoken 兑换 cookie_token{detail}")
 
     cookies.cookie_token = cookie_token
     return cookies

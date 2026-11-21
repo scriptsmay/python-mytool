@@ -393,6 +393,8 @@ class GetCookieStatus(BaseApiStatus):
     missing_stoken_v1: bool = False
     missing_stoken_v2: bool = False
     missing_mid: bool = False
+    message: Optional[str] = None
+    """服务器返回的 retcode/message（不含任何 token，仅用于诊断展示）"""
 
 
 class MissionStatus(BaseApiStatus):
@@ -741,8 +743,17 @@ class BBSCookies(BaseModelWithSetter, BaseModelWithUpdate):
             cookies.bbs_uid = uid
 
         # token
+        # App QR 确认响应的 body tokens 以 "stoken" 键下发，值可能带 v2_ 前缀（v2 格式）
+        # 也可能是不带前缀的 v1 格式；必须按前缀分流，与 BBSCookies.stoken setter 语义一致，
+        # 否则 v2 stoken 会误落进 stoken_v1 字段。
         stoken_v2 = raw.get("stoken_v2")
-        stoken_v1 = raw.get("stoken") or raw.get("stoken_v1")
+        stoken_v1 = raw.get("stoken_v1")
+        raw_stoken = raw.get("stoken")
+        if raw_stoken:
+            if raw_stoken.startswith("v2_"):
+                stoken_v2 = stoken_v2 or raw_stoken
+            else:
+                stoken_v1 = stoken_v1 or raw_stoken
         if stoken_v2:
             cookies.stoken_v2 = stoken_v2
         if stoken_v1:

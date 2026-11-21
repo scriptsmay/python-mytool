@@ -184,7 +184,7 @@ async def query_qr_login(
 
 
 URL_COOKIE_ACCOUNT_INFO_BY_STOKEN = (
-    "https://passport-api.mihoyo.com/account/auth/api/getCookieAccountInfoBySToken"
+    "https://passport-api.miyoushe.com/account/auth/api/getCookieAccountInfoBySToken"
 )
 
 
@@ -230,10 +230,15 @@ async def get_cookie_account_info_by_stoken(
                     return GetCookieStatus(success=True), cookie_token
                 elif api_result.login_expired:
                     logger.warning("通过 stoken 兑换 cookie_token: 登录失效")
-                    return GetCookieStatus(login_expired=True), None
+                    return GetCookieStatus(
+                        login_expired=True,
+                        message=f"服务器返回 {api_result.retcode} {api_result.message}".strip(),
+                    ), None
                 else:
                     logger.warning("通过 stoken 兑换 cookie_token: 兑换失败")
-                    return GetCookieStatus(), None
+                    return GetCookieStatus(
+                        message=f"服务器返回 {api_result.retcode} {api_result.message}".strip(),
+                    ), None
     except tenacity.RetryError as e:
         if is_incorrect_return(e):
             logger.exception("通过 stoken 兑换 cookie_token: 服务器没有正确返回")

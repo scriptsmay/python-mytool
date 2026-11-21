@@ -53,7 +53,7 @@ URL_COOKIE_TOKEN_BY_CAPTCHA = (
     "https://api-takumi.mihoyo.com/account/auth/api/webLoginByMobile"
 )
 URL_COOKIE_TOKEN_BY_STOKEN = (
-    "https://passport-api.mihoyo.com/account/auth/api/getCookieAccountInfoBySToken"
+    "https://passport-api.miyoushe.com/account/auth/api/getCookieAccountInfoBySToken"
 )
 URL_LTOKEN_BY_STOKEN = (
     "https://passport-api.mihoyo.com/account/auth/api/getLTokenBySToken"

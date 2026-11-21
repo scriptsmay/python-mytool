@@ -289,6 +289,29 @@ class TestBBSCookiesFromLoginCookie:
         assert cookies.stoken_v1 == "v1token"
         assert cookies.cookie_token == "ctok_v2"
 
+    def test_body_stoken_with_v2_prefix_goes_to_stoken_v2(self):
+        """App QR body 下发带 v2_ 前缀的 stoken 时应落入 stoken_v2 字段"""
+        cookies = BBSCookies.from_login_cookie({
+            "account_id": "uid1",
+            "stoken": "v2_bodytoken",
+            "mid": "m123",
+        })
+        assert cookies.stoken_v2 == "v2_bodytoken"
+        assert cookies.stoken_v1 is None
+        assert cookies.stoken == "v2_bodytoken"
+        assert cookies.mid == "m123"
+
+    def test_body_stoken_without_prefix_goes_to_stoken_v1(self):
+        """App QR body 下发不带前缀的 stoken 时应落入 stoken_v1 字段（保持旧行为）"""
+        cookies = BBSCookies.from_login_cookie({
+            "account_id": "uid1",
+            "stoken": "v1bodytoken",
+            "mid": "m123",
+        })
+        assert cookies.stoken_v1 == "v1bodytoken"
+        assert cookies.stoken_v2 is None
+        assert cookies.stoken == "v1bodytoken"
+
     def test_empty_dict(self):
         cookies = BBSCookies.from_login_cookie({})
         assert cookies.bbs_uid is None
