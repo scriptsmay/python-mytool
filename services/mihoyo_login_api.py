@@ -1,4 +1,8 @@
+import hashlib
 import http.cookies
+import json
+import random
+import time
 from urllib.parse import urlparse
 from typing import Optional, Tuple
 
@@ -15,6 +19,7 @@ from models import (
     QrLoginState,
     LoginSession,
     project_config,
+    project_env,
 )
 from services.common import (
     ApiResultHandler,
@@ -252,4 +257,125 @@ async def get_cookie_account_info_by_stoken(
             return GetCookieStatus(network_error=True), None
     except Exception:
         logger.exception("通过 stoken 兑换 cookie_token: 请求异常")
+        return GetCookieStatus(network_error=True), None
+
+
+# 2026-11-20 米游社改版：App 扫码签发的 token_type=1 stoken 已被
+# getCookieAccountInfoBySToken 拒绝（恒返 -464）。新链路走 passport
+# 的 ma-cn-session/app/exchange，可从 stoken 换出 v2 格式的
+# ltoken（dst_token_type=2）与 cookie_token（dst_token_type=4）。
+URL_EXCHANGE_TOKEN = (
+    "https://passport-api.mihoyo.com/account/ma-cn-session/app/exchange"
+)
+EXCHANGE_APP_VERSION = "2.109.0"
+EXCHANGE_SDK_VERSION = "2.44.0"
+
+
+def _gson_key_order(keys: list) -> list:
+    """按 Java HashMap 桶序排列 JSON 键（exchange 的 DS 校验要求）。
+
+    Gson 序列化 HashMap 时按 key 的 String.hashCode() 低 4 位分桶，
+    插入序会被服务端 DS 校验判为签名错误。
+    """
+    def bucket(key: str) -> int:
+        h = 0
+        for ch in key:
+            h = (h * 31 + ord(ch)) & 0xFFFFFFFF
+        return h & 15
+
+    return sorted(keys, key=bucket)
+
+
+def _build_exchange_body(stoken: str, mid: str, dst_token_type: int) -> str:
+    """构造 exchange 请求体，键序按 Gson 桶序（mid → dst_token_type → src_token）。"""
+    fields = {
+        "mid": mid,
+        "dst_token_type": dst_token_type,
+        "src_token": {"token": stoken, "token_type": 1},
+    }
+    ordered = {key: fields[key] for key in _gson_key_order(list(fields))}
+    # 与 Gson 输出一致：无多余空格，分隔符不带空白
+    return json.dumps(ordered, separators=(",", ":"), ensure_ascii=False)
+
+
+def _exchange_ds(body: str) -> str:
+    """passport exchange 接口专用 DS（SALT_PROD，body 原文参与签名）。
+
+    与 X4 盐不同：这里必须用 passport SDK 的 SALT_PROD，
+    且 query 为空字符串参与 md5。
+    """
+    t = str(int(time.time()))
+    r = str(random.randint(100000, 200000))
+    sign = hashlib.md5(
+        f"salt={project_env.salt_config.SALT_PROD}&t={t}&r={r}&b={body}&q=".encode()
+    ).hexdigest()
+    return f"{t},{r},{sign}"
+
+
+async def exchange_token_by_stoken(
+    cookies: BBSCookies,
+    dst_token_type: int,
+    device_id: str = None,
+    retry: bool = True,
+) -> Tuple[GetCookieStatus, Optional[str]]:
+    """用 v2 stoken + mid 通过 exchange 接口换 ltoken_v2 / cookie_token_v2。
+
+    :param cookies: 含 stoken_v2 与 mid 的 BBSCookies
+    :param dst_token_type: 2=ltoken_v2，4=cookie_token_v2
+    :param device_id: X_RPC_DEVICE_ID（应与 stoken 签发设备一致）
+    :param retry: 是否允许重试
+    :return: (状态, token 或 None)；token 不写入日志
+    """
+    if not cookies.stoken:
+        return GetCookieStatus(missing_stoken=True), None
+    if not cookies.mid:
+        return GetCookieStatus(missing_mid=True), None
+
+    body = _build_exchange_body(cookies.stoken, cookies.mid, dst_token_type)
+    dev_id = device_id if device_id else generate_device_id()
+    headers = {
+        "accept": "application/json",
+        "content-type": "application/json",
+        "DS": _exchange_ds(body),
+        "User-Agent": "okhttp/4.9.3",
+        "x-rpc-app_id": "bll8iq97cem8",
+        "x-rpc-client_type": "2",
+        "x-rpc-device_id": dev_id,
+        "x-rpc-device_name": "Mihoyo Capture",
+        "x-rpc-device_model": "Mi 14",
+        "x-rpc-game_biz": "bbs_cn",
+        "x-rpc-app_version": EXCHANGE_APP_VERSION,
+        "x-rpc-sdk_version": EXCHANGE_SDK_VERSION,
+        "x-rpc-account_version": EXCHANGE_SDK_VERSION,
+    }
+
+    try:
+        async for attempt in get_async_retry(retry):
+            with attempt:
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(
+                        URL_EXCHANGE_TOKEN,
+                        content=body,
+                        headers=headers,
+                        timeout=project_config.preference.timeout,
+                    )
+                api_result = ApiResultHandler.from_response(res.json())
+                if api_result.success:
+                    token = (api_result.data or {}).get("token", {}).get("token")
+                    if not token:
+                        logger.warning("exchange 换票: 响应缺少 token")
+                        return GetCookieStatus(missing_cookie_token=True), None
+                    return GetCookieStatus(success=True), token
+                logger.warning("exchange 换票: 兑换失败")
+                return GetCookieStatus(
+                    message=f"服务器返回 {api_result.retcode} {api_result.message}".strip(),
+                ), None
+    except tenacity.RetryError as e:
+        if is_incorrect_return(e):
+            logger.exception("exchange 换票: 服务器没有正确返回")
+            return GetCookieStatus(incorrect_return=True), None
+        logger.exception("exchange 换票: 网络请求失败")
+        return GetCookieStatus(network_error=True), None
+    except Exception:
+        logger.exception("exchange 换票: 请求异常")
         return GetCookieStatus(network_error=True), None

@@ -15,6 +15,7 @@ from models import (
 from services.mihoyo_login_api import (
     close_session,
     create_qr_login,
+    exchange_token_by_stoken,
     get_cookie_account_info_by_stoken,
     query_qr_login,
 )
@@ -193,27 +194,44 @@ async def build_and_validate_account(
 
     cookies.bbs_uid = bbs_uid
 
+    # 2026-11-20 米游社改版：App 扫码签发的 v2 stoken 已被旧
+    # getCookieAccountInfoBySToken 拒绝（恒返 -464）。v2 stoken 必须走
+    # ma-cn-session/app/exchange 换出 v2 票据；v1 stoken 保留旧接口兼容。
+    is_v2_stoken = bool(cookies.stoken and cookies.stoken.startswith("v2_"))
+
     if not cookies.cookie_token and not cookies.cookie_token_v2:
-        # 确认响应可能只在 Set-Cookie（Web QR 常见）或 body tokens（App QR 常见）
-        # 携带部分凭据；只要 stoken + mid 齐全就兑换 cookie_token，不区分链路
-        exchange_result = await _exchange_stoken_for_cookie_token(cookies, session)
-        if isinstance(exchange_result, TaskResult):
-            return exchange_result
-        cookies = exchange_result
+        if is_v2_stoken:
+            exchange_result = await _exchange_v2_token(cookies, session, 4)
+            if isinstance(exchange_result, TaskResult):
+                return exchange_result
+            cookies = exchange_result
+        else:
+            # 确认响应可能只在 Set-Cookie（Web QR 常见）携带部分凭据
+            exchange_result = await _exchange_stoken_for_cookie_token(cookies, session)
+            if isinstance(exchange_result, TaskResult):
+                return exchange_result
+            cookies = exchange_result
 
     # App QR 确认响应不下发 ltoken，但游戏角色等接口需要它；用 stoken + mid 补兑换。
     # 失败时仅告警不阻断登录——cookie_token 已足以通过社区接口验证。
     if not cookies.ltoken and not cookies.ltoken_v2:
-        ltoken_status, ltoken_cookies = await get_ltoken_by_stoken(
-            cookies, device_id=session.device_id, retry=False
-        )
-        if ltoken_status.success and ltoken_cookies and ltoken_cookies.ltoken:
-            cookies.ltoken = ltoken_cookies.ltoken
+        if is_v2_stoken:
+            ltoken_result = await _exchange_v2_token(cookies, session, 2)
+            if not isinstance(ltoken_result, TaskResult) and ltoken_result.ltoken_v2:
+                cookies.ltoken_v2 = ltoken_result.ltoken_v2
+            else:
+                logger.warning("补兑换 ltoken_v2 失败，部分游戏角色接口可能报登录失效")
         else:
-            logger.warning(
-                f"补兑换 ltoken 失败（{ltoken_status.error_type}），"
-                "部分游戏角色接口可能报登录失效"
+            ltoken_status, ltoken_cookies = await get_ltoken_by_stoken(
+                cookies, device_id=session.device_id, retry=False
             )
+            if ltoken_status.success and ltoken_cookies and ltoken_cookies.ltoken:
+                cookies.ltoken = ltoken_cookies.ltoken
+            else:
+                logger.warning(
+                    f"补兑换 ltoken 失败（{ltoken_status.error_type}），"
+                    "部分游戏角色接口可能报登录失效"
+                )
 
     account = UserAccount(
         phone_number=None,
@@ -223,6 +241,32 @@ async def build_and_validate_account(
     )
 
     return account
+
+
+async def _exchange_v2_token(
+    cookies: BBSCookies,
+    session: LoginSession,
+    dst_token_type: int,
+) -> Union[BBSCookies, TaskResult]:
+    """用 v2 stoken 通过 exchange 接口换票（2=ltoken_v2，4=cookie_token_v2）。"""
+    if not cookies.mid:
+        return _failed_result("扫码成功，但登录凭据不完整：缺少 mid，无法兑换票据")
+
+    status, token = await exchange_token_by_stoken(
+        cookies, dst_token_type=dst_token_type,
+        device_id=session.device_id, retry=False,
+    )
+    if not status.success or not token:
+        if status.network_error:
+            return _failed_result("兑换票据网络异常，请稍后重试")
+        detail = f"（{status.message}）" if status.message else ""
+        return _failed_result(f"扫码成功，但无法通过 stoken 兑换票据{detail}")
+
+    if dst_token_type == 4:
+        cookies.cookie_token_v2 = token
+    else:
+        cookies.ltoken_v2 = token
+    return cookies
 
 
 async def _exchange_stoken_for_cookie_token(
