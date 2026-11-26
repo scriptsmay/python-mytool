@@ -262,9 +262,14 @@ async def _exchange_v2_token(
         detail = f"（{status.message}）" if status.message else ""
         return _failed_result(f"扫码成功，但无法通过 stoken 兑换票据{detail}")
 
+    # exchange 换出的票据值本身带 v2_ 前缀，但业务接口（getGameRecordCard 等）
+    # 只认常规键名 cookie_token/ltoken；实测写入 *_v2 字段会导致「登录失效」。
+    # 因此双写：常规键名供业务接口使用，v2 字段保留供需要显式 v2 的接口使用。
     if dst_token_type == 4:
+        cookies.cookie_token = token
         cookies.cookie_token_v2 = token
     else:
+        cookies.ltoken = token
         cookies.ltoken_v2 = token
     return cookies
 

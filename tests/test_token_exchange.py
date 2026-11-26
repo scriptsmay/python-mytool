@@ -264,8 +264,10 @@ class TestLoginIntegration:
             result = await build_and_validate_account(poll, session)
 
         assert isinstance(result, UserAccount)
-        assert result.cookies.cookie_token_v2 == "v2_token_4"
-        assert result.cookies.ltoken_v2 == "v2_token_2"
+        # exchange 换出的 v2 票据（值带 v2_ 前缀）必须写入常规键名，
+        # getGameRecordCard 只认 cookie_token/ltoken，不认 *_v2 字段。
+        assert result.cookies.cookie_token == "v2_token_4"
+        assert result.cookies.ltoken == "v2_token_2"
         assert mock_exchange.call_count == 2
 
     @pytest.mark.asyncio
